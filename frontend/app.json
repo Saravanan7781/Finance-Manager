@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "Family Finance",
+    "slug": "frontend",
+    "scheme": "familyfinance",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.familyfinance.app"
+    },
+    "android": {
+      "package": "com.familyfinance.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#C9E8D6",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "color": "#0E100F"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "aed321be-97e9-486c-bcf4-c52a41ec27dd"
+      }
+    },
+    "owner": "saravanan7s-team"
+  }
+}

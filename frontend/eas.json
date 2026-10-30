@@ -1,0 +1,31 @@
+{
+  "cli": {
+    "version": ">= 5.0.0"
+  },
+  "build": {
+    "base": {
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://10.19.182.185:5000",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyCezWIfTvesaX_Bxf9Wi2SKzjwF7E4fDkY",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "family-finance-7.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "family-finance-7",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "family-finance-7.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "122100417416",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:122100417416:web:755e01232f4f1dd31ef03d"
+      }
+    },
+    "preview": {
+      "extends": "base",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {
+      "extends": "base",
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  }
+}

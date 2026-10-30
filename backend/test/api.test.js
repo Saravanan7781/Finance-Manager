@@ -1,0 +1,499 @@
+process.env.NODE_ENV = 'test';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { FakeFirestore, FakeAuth, FieldValue } = require('./fakeFirestore');
+
+// Swap the real Firebase config for in-memory fakes before anything requires it.
+const db = new FakeFirestore();
+const auth = new FakeAuth();
+const firebasePath = require.resolve('../config/firebase');
+require.cache[firebasePath] = {
+    id: firebasePath,
+    filename: firebasePath,
+    loaded: true,
+    exports: { admin: { firestore: { FieldValue } }, db, auth },
+};
+
+const app = require('../app');
+
+let server;
+let baseUrl;
+
+test.before(async () => {
+    await new Promise((resolve) => {
+        server = app.listen(0, resolve);
+    });
+    baseUrl = `http://127.0.0.1:${server.address().port}`;
+});
+
+test.after(() => server.close());
+
+test.beforeEach(() => {
+    db.reset();
+    auth.reset();
+});
+
+const call = async (method, path, { as, body } = {}) => {
+    const response = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers: {
+            'Content-Type': 'application/json',
+            ...(as ? { Authorization: `Bearer token-${as}` } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await response.text();
+    return { status: response.status, body: text ? JSON.parse(text) : null };
+};
+
+const register = async (name) => {
+    const { status, body } = await call('POST', '/api/auth/register', {
+        body: { email: `${name}@test.dev`, password: 'secret123', displayName: name },
+    });
+    assert.equal(status, 201);
+    return body.uid;
+};
+
+// owner runs a family, member has been approved into it, outsider belongs to nobody.
+const setup = async () => {
+    const owner = await register('Owner');
+    const member = await register('Member');
+    const outsider = await register('Outsider');
+
+    const created = await call('POST', '/api/family/create', { as: owner, body: { familyName: 'The Rao Family' } });
+    assert.equal(created.status, 201);
+    const { familyId, inviteCode } = created.body;
+
+    const join = await call('POST', '/api/family/join', { as: member, body: { inviteCode } });
+    assert.equal(join.status, 202);
+    const approve = await call('POST', `/api/family/requests/${join.body.requestId}/approve`, { as: owner });
+    assert.equal(approve.status, 200);
+
+    return { owner, member, outsider, familyId, inviteCode };
+};
+
+const addTx = (as, familyId, extra = {}) => call('POST', '/api/transactions', {
+    as,
+    body: { familyId, amount: 100, type: 'expense', category: 'Groceries', date: '2026-10-05T10:00:00.000Z', ...extra },
+});
+
+test('requests without a valid token are rejected', async () => {
+    assert.equal((await call('GET', '/api/me')).status, 401);
+    assert.equal((await call('GET', '/api/me', { as: '' })).status, 401);
+});
+
+test('register validates input and creates a profile', async () => {
+    const bad = await call('POST', '/api/auth/register', { body: { email: 'nope', password: '1', displayName: '' } });
+    assert.equal(bad.status, 400);
+
+    const uid = await register('Asha');
+    const me = await call('GET', '/api/me', { as: uid });
+    assert.equal(me.status, 200);
+    assert.equal(me.body.displayName, 'Asha');
+    assert.equal(me.body.family, null);
+});
+
+test('joining a family needs admin approval', async () => {
+    const owner = await register('Owner');
+    const joiner = await register('Joiner');
+    const { body: created } = await call('POST', '/api/family/create', { as: owner, body: { familyName: 'Home' } });
+
+    const wrongCode = await call('POST', '/api/family/join', { as: joiner, body: { inviteCode: 'ZZZZZZZZ' } });
+    assert.equal(wrongCode.status, 404);
+
+    // Codes are case-insensitive.
+    const join = await call('POST', '/api/family/join', { as: joiner, body: { inviteCode: created.inviteCode.toLowerCase() } });
+    assert.equal(join.status, 202);
+
+    const again = await call('POST', '/api/family/join', { as: joiner, body: { inviteCode: created.inviteCode } });
+    assert.equal(again.status, 409);
+
+    const pending = await call('GET', '/api/me', { as: joiner });
+    assert.equal(pending.body.family, null);
+    assert.equal(pending.body.pendingRequest.familyName, 'Home');
+
+    // Not a member yet, so no access.
+    assert.equal((await call('GET', `/api/transactions/${created.familyId}`, { as: joiner })).status, 403);
+
+    // Only the admin can see or decide on requests.
+    assert.equal((await call('GET', `/api/family/${created.familyId}/requests`, { as: joiner })).status, 403);
+    assert.equal((await call('POST', `/api/family/requests/${join.body.requestId}/approve`, { as: joiner })).status, 403);
+
+    const list = await call('GET', `/api/family/${created.familyId}/requests`, { as: owner });
+    assert.equal(list.body.length, 1);
+    assert.equal(list.body[0].displayName, 'Joiner');
+
+    const approved = await call('POST', `/api/family/requests/${join.body.requestId}/approve`, { as: owner });
+    assert.equal(approved.status, 200);
+    assert.equal((await call('POST', `/api/family/requests/${join.body.requestId}/approve`, { as: owner })).status, 409);
+
+    const joined = await call('GET', '/api/me', { as: joiner });
+    assert.equal(joined.body.family.id, created.familyId);
+    assert.equal(joined.body.pendingRequest, null);
+    assert.equal((await call('GET', `/api/transactions/${created.familyId}`, { as: joiner })).status, 200);
+});
+
+test('rejected requests do not grant access', async () => {
+    const owner = await register('Owner');
+    const joiner = await register('Joiner');
+    const { body: created } = await call('POST', '/api/family/create', { as: owner, body: { familyName: 'Home' } });
+    const join = await call('POST', '/api/family/join', { as: joiner, body: { inviteCode: created.inviteCode } });
+
+    assert.equal((await call('POST', `/api/family/requests/${join.body.requestId}/reject`, { as: owner })).status, 200);
+    assert.equal((await call('GET', `/api/family/${created.familyId}`, { as: joiner })).status, 403);
+
+    // A rejected person can ask again.
+    const retry = await call('POST', '/api/family/join', { as: joiner, body: { inviteCode: created.inviteCode } });
+    assert.equal(retry.status, 202);
+});
+
+test('a user cannot create or join a second family', async () => {
+    const { owner, outsider } = await setup();
+    const second = await call('POST', '/api/family/create', { as: owner, body: { familyName: 'Another' } });
+    assert.equal(second.status, 409);
+
+    const other = await call('POST', '/api/family/create', { as: outsider, body: { familyName: 'Other' } });
+    const join = await call('POST', '/api/family/join', { as: outsider, body: { inviteCode: other.body.inviteCode } });
+    assert.equal(join.status, 400);
+});
+
+test('family details list members and hide nothing from members only', async () => {
+    const { owner, member, outsider, familyId } = await setup();
+
+    const details = await call('GET', `/api/family/${familyId}`, { as: member });
+    assert.equal(details.status, 200);
+    assert.equal(details.body.members.length, 2);
+    assert.deepEqual(details.body.members.map((m) => m.role).sort(), ['admin', 'member']);
+
+    assert.equal((await call('GET', `/api/family/${familyId}`, { as: outsider })).status, 403);
+    assert.equal((await call('POST', `/api/family/${familyId}/invite`, { as: member })).status, 403);
+
+    const regenerated = await call('POST', `/api/family/${familyId}/invite`, { as: owner });
+    assert.equal(regenerated.status, 200);
+    assert.match(regenerated.body.inviteCode, /^[0-9A-F]{8}$/);
+});
+
+test('outsiders cannot read or write another family\'s data', async () => {
+    const { owner, outsider, familyId } = await setup();
+    const tx = await addTx(owner, familyId);
+    const goal = await call('POST', '/api/goals', { as: owner, body: { familyId, title: 'Trip', targetAmount: 5000 } });
+    const loan = await call('POST', '/api/loans', { as: owner, body: { familyId, person: 'Ravi', amount: 300 } });
+
+    const attempts = [
+        call('GET', `/api/transactions/${familyId}`, { as: outsider }),
+        call('GET', `/api/transactions/${familyId}/summary`, { as: outsider }),
+        addTx(outsider, familyId),
+        call('PUT', `/api/transactions/${tx.body.id}`, { as: outsider, body: { amount: 1 } }),
+        call('DELETE', `/api/transactions/${tx.body.id}`, { as: outsider }),
+        call('GET', `/api/goals/${familyId}`, { as: outsider }),
+        call('POST', '/api/goals', { as: outsider, body: { familyId, title: 'Hack', targetAmount: 1 } }),
+        call('PUT', '/api/goals/update', { as: outsider, body: { goalId: goal.body.id, amount: 999 } }),
+        call('DELETE', `/api/goals/${goal.body.id}`, { as: outsider }),
+        call('GET', `/api/loans/${familyId}`, { as: outsider }),
+        call('PUT', `/api/loans/${loan.body.id}/repay`, { as: outsider }),
+        call('GET', `/api/budgets/${familyId}`, { as: outsider }),
+        call('PUT', '/api/budgets', { as: outsider, body: { familyId, category: 'Food', limit: 10 } }),
+    ];
+    const results = await Promise.all(attempts);
+    results.forEach((r, i) => assert.equal(r.status, 403, `attempt ${i} should be forbidden, got ${r.status}`));
+});
+
+test('transactions: add, list, filter, edit, delete', async () => {
+    const { owner, member, familyId } = await setup();
+
+    const first = await addTx(owner, familyId, { amount: 12.345, description: 'Milk' });
+    assert.equal(first.status, 201);
+    await addTx(member, familyId, { type: 'income', category: 'Salary', amount: 1000, date: '2026-10-06T10:00:00.000Z' });
+    await addTx(member, familyId, { category: 'Travel', amount: 50, date: '2026-10-07T10:00:00.000Z' });
+
+    const bad = await call('POST', '/api/transactions', { as: owner, body: { familyId, amount: -5, type: 'expense', category: 'X' } });
+    assert.equal(bad.status, 400);
+
+    const all = await call('GET', `/api/transactions/${familyId}`, { as: owner });
+    assert.equal(all.body.length, 3);
+    assert.equal(all.body[0].category, 'Travel', 'newest first');
+    assert.equal(typeof all.body[0].date, 'string');
+
+    const incomeOnly = await call('GET', `/api/transactions/${familyId}?type=income`, { as: owner });
+    assert.deepEqual(incomeOnly.body.map((t) => t.category), ['Salary']);
+
+    const ranged = await call('GET', `/api/transactions/${familyId}?from=2026-10-06T00:00:00.000Z`, { as: owner });
+    assert.equal(ranged.body.length, 2);
+
+    const page1 = await call('GET', `/api/transactions/${familyId}?limit=2`, { as: owner });
+    const page2 = await call('GET', `/api/transactions/${familyId}?limit=2&startAfter=${page1.body[1].id}`, { as: owner });
+    assert.equal(page1.body.length, 2);
+    assert.equal(page2.body.length, 1);
+
+    // The person who added it can edit; another non-admin member cannot.
+    const memberTx = all.body[0];
+    assert.equal((await call('PUT', `/api/transactions/${first.body.id}`, { as: member, body: { amount: 1 } })).status, 403);
+    assert.equal((await call('PUT', `/api/transactions/${memberTx.id}`, { as: member, body: { amount: 55 } })).status, 200);
+
+    // The admin can edit anyone's entry.
+    assert.equal((await call('PUT', `/api/transactions/${memberTx.id}`, { as: owner, body: { category: 'Fuel' } })).status, 200);
+    assert.equal((await call('PUT', `/api/transactions/${memberTx.id}`, { as: owner, body: {} })).status, 400);
+
+    assert.equal((await call('DELETE', `/api/transactions/${first.body.id}`, { as: member })).status, 403);
+    assert.equal((await call('DELETE', `/api/transactions/${first.body.id}`, { as: owner })).status, 200);
+    assert.equal((await call('DELETE', `/api/transactions/${first.body.id}`, { as: owner })).status, 404);
+});
+
+test('transactions: duplicate SMS captures are rejected', async () => {
+    const { owner, familyId } = await setup();
+    const body = { source: 'sms', dedupeKey: 'HDFCBK-123' };
+
+    assert.equal((await addTx(owner, familyId, body)).status, 201);
+    assert.equal((await addTx(owner, familyId, body)).status, 409);
+    assert.equal((await addTx(owner, familyId, { source: 'sms', dedupeKey: 'HDFCBK-124' })).status, 201);
+});
+
+test('summary totals, category shares and month comparison', async () => {
+    const { owner, member, familyId } = await setup();
+
+    await addTx(owner, familyId, { amount: 100, category: 'Groceries', date: '2026-10-05T10:00:00.000Z' });
+    await addTx(member, familyId, { amount: 50, category: 'Travel', date: '2026-10-10T10:00:00.000Z' });
+    await addTx(owner, familyId, { amount: 1000, type: 'income', category: 'Salary', date: '2026-10-12T10:00:00.000Z' });
+    await addTx(owner, familyId, { amount: 200, category: 'Groceries', date: '2026-09-20T10:00:00.000Z' });
+
+    const { status, body } = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10`, { as: member });
+    assert.equal(status, 200);
+    assert.equal(body.income, 1000);
+    assert.equal(body.expense, 150);
+    assert.equal(body.net, 850);
+    assert.equal(body.balance, 650, 'balance spans every month');
+    assert.equal(body.previousExpense, 200);
+    assert.equal(body.expenseChangePercent, -25);
+    assert.equal(body.transactionCount, 3);
+    assert.deepEqual(body.byCategory.map((c) => [c.category, c.total, c.percent]), [['Groceries', 100, 66.7], ['Travel', 50, 33.3]]);
+    assert.deepEqual(body.byMember.map((m) => [m.name, m.expense]), [['Owner', 100], ['Member', 50]]);
+    assert.equal(body.byDay.length, 3);
+
+    assert.equal((await call('GET', `/api/transactions/${familyId}/summary?month=2026-13`, { as: owner })).status, 400);
+});
+
+test('summary respects the caller timezone at month boundaries', async () => {
+    const { owner, familyId } = await setup();
+    // 01 Nov 02:00 in India (+05:30) is still 31 Oct in UTC.
+    await addTx(owner, familyId, { amount: 80, date: '2026-10-31T20:30:00.000Z' });
+
+    const utc = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10`, { as: owner });
+    const ist = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10&tzOffset=330`, { as: owner });
+    const istNov = await call('GET', `/api/transactions/${familyId}/summary?month=2026-11&tzOffset=330`, { as: owner });
+
+    assert.equal(utc.body.expense, 80);
+    assert.equal(ist.body.expense, 0);
+    assert.equal(istNov.body.expense, 80);
+});
+
+test('summary can be limited to the caller\'s own transactions', async () => {
+    const { owner, member, familyId } = await setup();
+
+    await addTx(owner, familyId, { amount: 100, category: 'Groceries', date: '2026-10-05T10:00:00.000Z' });
+    await addTx(member, familyId, { amount: 50, category: 'Travel', date: '2026-10-10T10:00:00.000Z' });
+    await addTx(member, familyId, { amount: 500, type: 'income', category: 'Salary', date: '2026-10-11T10:00:00.000Z' });
+    await addTx(member, familyId, { amount: 20, category: 'Travel', date: '2026-09-11T10:00:00.000Z' });
+
+    const family = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10`, { as: member });
+    assert.equal(family.body.scope, 'family');
+    assert.equal(family.body.expense, 150);
+
+    const mine = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10&scope=me`, { as: member });
+    assert.equal(mine.body.scope, 'me');
+    assert.equal(mine.body.expense, 50);
+    assert.equal(mine.body.income, 500);
+    assert.equal(mine.body.balance, 430, 'balance counts only my own entries');
+    assert.equal(mine.body.previousExpense, 20);
+    assert.deepEqual(mine.body.byCategory.map((c) => [c.category, c.percent]), [['Travel', 100]]);
+    assert.deepEqual(mine.body.byMember.map((m) => m.name), ['Member']);
+
+    const theirs = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10&scope=me`, { as: owner });
+    assert.equal(theirs.body.expense, 100);
+    assert.equal(theirs.body.income, 0);
+});
+
+test('trend: day, week and month buckets, limited to me on request', async () => {
+    const { owner, member, outsider, familyId } = await setup();
+    const DAY = 86400000;
+    const ago = (days) => new Date(Date.now() - days * DAY).toISOString();
+
+    await addTx(owner, familyId, { amount: 100, date: ago(0) });
+    await addTx(member, familyId, { amount: 40, date: ago(0) });
+    await addTx(owner, familyId, { amount: 30, date: ago(2) });
+    await addTx(owner, familyId, { amount: 500, type: 'income', category: 'Salary', date: ago(2) });
+    await addTx(owner, familyId, { amount: 70, date: ago(20) });
+    await addTx(owner, familyId, { amount: 900, date: ago(400) });
+
+    const days = await call('GET', `/api/transactions/${familyId}/trend?range=day`, { as: owner });
+    assert.equal(days.status, 200);
+    assert.equal(days.body.range, 'day');
+    assert.equal(days.body.buckets.length, 7);
+    assert.equal(days.body.buckets[6].expense, 140, 'today, everyone');
+    assert.equal(days.body.buckets[4].expense, 30);
+    assert.equal(days.body.buckets[4].income, 500);
+    days.body.buckets.slice(1).forEach((b, i) => assert.equal(b.start, days.body.buckets[i].end, 'buckets touch end to start'));
+
+    const total = (res) => res.body.buckets.reduce((sum, b) => sum + b.expense, 0);
+    const weeks = await call('GET', `/api/transactions/${familyId}/trend?range=week`, { as: owner });
+    const months = await call('GET', `/api/transactions/${familyId}/trend?range=month`, { as: owner });
+    assert.equal(weeks.body.buckets.length, 8);
+    assert.equal(months.body.buckets.length, 6);
+    assert.equal(total(weeks), 240, 'the 400 day old entry is outside the window');
+    assert.equal(total(months), 240);
+    assert.equal(weeks.body.buckets[7].expense >= 140, true, 'this week holds today');
+
+    // The pie chart's numbers: expenses only, across the whole window.
+    assert.deepEqual(days.body.byCategory, [{ category: 'Groceries', total: 170, percent: 100 }]);
+    assert.equal(weeks.body.byCategory[0].total, 240);
+
+    const mine = await call('GET', `/api/transactions/${familyId}/trend?range=day&scope=me`, { as: member });
+    assert.equal(mine.body.scope, 'me');
+    assert.equal(mine.body.buckets[6].expense, 40);
+    assert.equal(mine.body.buckets[4].income, 0);
+
+    // A bucket's own start and end return exactly its transactions.
+    const today = days.body.buckets[6];
+    const inBucket = await call('GET', `/api/transactions/${familyId}?from=${today.start}&to=${new Date(Date.parse(today.end) - 1).toISOString()}`, { as: owner });
+    assert.equal(inBucket.body.length, 2);
+
+    const fallback = await call('GET', `/api/transactions/${familyId}/trend?range=bogus`, { as: owner });
+    assert.equal(fallback.body.range, 'day');
+    assert.equal((await call('GET', `/api/transactions/${familyId}/trend?range=day`, { as: outsider })).status, 403);
+});
+
+test('transaction list can be limited to my own entries', async () => {
+    const { owner, member, familyId } = await setup();
+    await addTx(owner, familyId, { amount: 10 });
+    await addTx(member, familyId, { amount: 20 });
+    await addTx(member, familyId, { amount: 30, type: 'income', category: 'Salary' });
+
+    const everyone = await call('GET', `/api/transactions/${familyId}`, { as: member });
+    const mine = await call('GET', `/api/transactions/${familyId}?scope=me`, { as: member });
+    const mineIncome = await call('GET', `/api/transactions/${familyId}?scope=me&type=income`, { as: member });
+    assert.equal(everyone.body.length, 3);
+    assert.deepEqual(mine.body.map((t) => t.amount).sort(), [20, 30]);
+    assert.deepEqual(mineIncome.body.map((t) => t.amount), [30]);
+});
+
+test('goals: create, contribute, clamp at zero, edit, delete', async () => {
+    const { owner, member, familyId } = await setup();
+
+    const created = await call('POST', '/api/goals', { as: owner, body: { familyId, title: 'Goa trip', targetAmount: 1000, deadline: '2027-01-01' } });
+    assert.equal(created.status, 201);
+    const goalId = created.body.id;
+
+    const first = await call('PUT', '/api/goals/update', { as: member, body: { goalId, amount: 400 } });
+    assert.equal(first.body.currentAmount, 400);
+    assert.equal(first.body.completed, false);
+
+    const second = await call('PUT', '/api/goals/update', { as: owner, body: { goalId, amount: 600 } });
+    assert.equal(second.body.completed, true);
+
+    const overdraw = await call('PUT', '/api/goals/update', { as: owner, body: { goalId, amount: -5000 } });
+    assert.equal(overdraw.body.currentAmount, 0);
+
+    assert.equal((await call('PUT', `/api/goals/${goalId}`, { as: owner, body: { title: 'Goa 2027', deadline: null } })).status, 200);
+    assert.equal((await call('PUT', `/api/goals/${goalId}`, { as: owner, body: {} })).status, 400);
+
+    const list = await call('GET', `/api/goals/${familyId}`, { as: member });
+    assert.equal(list.body[0].title, 'Goa 2027');
+    assert.equal(list.body[0].deadline, null);
+
+    assert.equal((await call('DELETE', `/api/goals/${goalId}`, { as: owner })).status, 200);
+    assert.equal((await call('GET', `/api/goals/${familyId}`, { as: owner })).body.length, 0);
+});
+
+test('loans: default due date, partial and full repayment', async () => {
+    const { owner, member, familyId } = await setup();
+
+    const created = await call('POST', '/api/loans', { as: owner, body: { familyId, person: 'Ravi', amount: 500 } });
+    assert.equal(created.status, 201);
+
+    const list = await call('GET', `/api/loans/${familyId}`, { as: member });
+    const loan = list.body[0];
+    assert.equal(loan.direction, 'lent');
+    assert.equal(loan.status, 'open');
+    const days = (new Date(loan.dueDate) - Date.now()) / 86400000;
+    assert.ok(days > 6.9 && days < 7.1, `due date should default to +7 days, got ${days}`);
+
+    const partial = await call('PUT', `/api/loans/${loan.id}/repay`, { as: owner, body: { amount: 200 } });
+    assert.deepEqual(partial.body, { repaidAmount: 200, outstanding: 300, status: 'open' });
+
+    const rest = await call('PUT', `/api/loans/${loan.id}/repay`, { as: owner });
+    assert.deepEqual(rest.body, { repaidAmount: 500, outstanding: 0, status: 'settled' });
+    assert.equal((await call('PUT', `/api/loans/${loan.id}/repay`, { as: owner })).status, 409);
+
+    assert.equal((await call('GET', `/api/loans/${familyId}?status=open`, { as: owner })).body.length, 0);
+    assert.equal((await call('GET', `/api/loans/${familyId}?status=settled`, { as: owner })).body.length, 1);
+
+    assert.equal((await call('DELETE', `/api/loans/${loan.id}`, { as: owner })).status, 200);
+});
+
+test('budgets: one per category, upsert and delete', async () => {
+    const { owner, member, familyId } = await setup();
+
+    const set = await call('PUT', '/api/budgets', { as: owner, body: { familyId, category: 'Groceries', limit: 8000 } });
+    assert.equal(set.status, 200);
+    await call('PUT', '/api/budgets', { as: member, body: { familyId, category: 'groceries', limit: 9000 } });
+    await call('PUT', '/api/budgets', { as: owner, body: { familyId, category: 'Travel', limit: 3000 } });
+
+    const list = await call('GET', `/api/budgets/${familyId}`, { as: owner });
+    assert.equal(list.body.length, 2);
+    assert.equal(list.body.find((b) => b.id === set.body.id).limit, 9000);
+
+    assert.equal((await call('DELETE', `/api/budgets/${set.body.id}`, { as: owner })).status, 200);
+    assert.equal((await call('GET', `/api/budgets/${familyId}`, { as: owner })).body.length, 1);
+});
+
+test('members can leave, the admin must hand over first, admins can remove members', async () => {
+    const { owner, member, familyId } = await setup();
+
+    const blocked = await call('POST', '/api/family/leave', { as: owner });
+    assert.equal(blocked.status, 400);
+
+    assert.equal((await call('DELETE', `/api/family/${familyId}/members/${member}`, { as: member })).status, 403);
+    assert.equal((await call('DELETE', `/api/family/${familyId}/members/${owner}`, { as: owner })).status, 400);
+
+    const transfer = await call('PUT', `/api/family/${familyId}/admin`, { as: owner, body: { userId: member } });
+    assert.equal(transfer.status, 200);
+
+    const left = await call('POST', '/api/family/leave', { as: owner });
+    assert.equal(left.status, 200);
+    assert.equal((await call('GET', '/api/me', { as: owner })).body.family, null);
+    assert.equal((await call('GET', `/api/transactions/${familyId}`, { as: owner })).status, 403);
+
+    // The last person leaving closes the family down.
+    assert.equal((await call('POST', '/api/family/leave', { as: member })).status, 200);
+    assert.equal((await call('GET', `/api/family/${familyId}`, { as: member })).status, 404);
+});
+
+test('admin can remove a member', async () => {
+    const { owner, member, familyId } = await setup();
+
+    assert.equal((await call('DELETE', `/api/family/${familyId}/members/${member}`, { as: owner })).status, 200);
+    assert.equal((await call('GET', '/api/me', { as: member })).body.familyId, null);
+    assert.equal((await call('GET', `/api/transactions/${familyId}`, { as: member })).status, 403);
+});
+
+test('only the admin can rename the family', async () => {
+    const { owner, member, outsider, familyId } = await setup();
+
+    assert.equal((await call('PATCH', `/api/family/${familyId}`, { as: member, body: { familyName: 'Nope Family' } })).status, 403);
+    assert.equal((await call('PATCH', `/api/family/${familyId}`, { as: outsider, body: { familyName: 'Nope Family' } })).status, 403);
+    assert.equal((await call('PATCH', `/api/family/${familyId}`, { as: owner, body: { familyName: 'X' } })).status, 400);
+
+    const renamed = await call('PATCH', `/api/family/${familyId}`, { as: owner, body: { familyName: '  The Iyer Family ' } });
+    assert.equal(renamed.status, 200);
+    assert.equal(renamed.body.name, 'The Iyer Family');
+
+    assert.equal((await call('GET', '/api/me', { as: member })).body.family.name, 'The Iyer Family');
+    assert.equal((await call('GET', `/api/family/${familyId}`, { as: member })).body.name, 'The Iyer Family');
+});
+
+test('profile name can be updated', async () => {
+    const uid = await register('Asha');
+    assert.equal((await call('PATCH', '/api/me', { as: uid, body: { displayName: 'A' } })).status, 400);
+    assert.equal((await call('PATCH', '/api/me', { as: uid, body: { displayName: 'Asha R' } })).status, 200);
+    assert.equal((await call('GET', '/api/me', { as: uid })).body.displayName, 'Asha R');
+});
