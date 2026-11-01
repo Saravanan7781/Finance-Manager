@@ -2,11 +2,13 @@ import { API_URL, DEMO } from './config';
 import { getFirebaseAuth } from './firebase';
 import type {
     Budget,
+    CustomCategory,
     FamilyDetails,
     Goal,
     JoinRequest,
     Loan,
     Me,
+    RecurringTx,
     Summary,
     SummaryScope,
     Trend,
@@ -44,10 +46,14 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
     const token = user ? await user.getIdToken() : null;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
+    // 60-second timeout to allow for Render free-tier cold starts (which take 30-50s)
+    const timer = setTimeout(() => controller.abort(), 60000);
 
     let response: Response;
     try {
+        if (__DEV__) {
+            console.log(`[API Request] ${method} ${API_URL}/api${path}`);
+        }
         response = await fetch(`${API_URL}/api${path}`, {
             method,
             headers: {
@@ -57,14 +63,24 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
             body: body === undefined ? undefined : JSON.stringify(body),
             signal: controller.signal,
         });
-    } catch {
+    } catch (err) {
+        if (__DEV__) {
+            console.warn(`[API Error] Failed to reach ${API_URL}/api${path}:`, err);
+        }
         throw new ApiError("Can't reach the server. Check your connection and that the API is running.", 0);
     } finally {
         clearTimeout(timer);
     }
 
     const text = await response.text();
-    const json = text ? JSON.parse(text) : null;
+    let json: any = null;
+    if (text) {
+        try {
+            json = JSON.parse(text);
+        } catch {
+            json = null;
+        }
+    }
     if (!response.ok) {
         throw new ApiError(json?.error || `Request failed (${response.status})`, response.status);
     }
@@ -94,16 +110,22 @@ export const api = {
         request<{ message: string }>('PUT', `/family/${familyId}/admin`, { userId }),
     regenerateInvite: (familyId: string) =>
         request<{ inviteCode: string }>('POST', `/family/${familyId}/invite`),
+    addCustomCategory: (familyId: string, input: { name: string; type: TxType; tint?: string; icon?: string }) =>
+        request<CustomCategory>('POST', `/family/${familyId}/categories`, input),
+    deleteCustomCategory: (familyId: string, categoryId: string) =>
+        request<{ message: string }>('DELETE', `/family/${familyId}/categories/${categoryId}`),
 
     transactions: (
         familyId: string,
-        opts: { type?: TxType; category?: string; from?: string; to?: string; limit?: number; startAfter?: string; scope?: SummaryScope } = {}
+        opts: { type?: TxType; category?: string; from?: string; to?: string; limit?: number; startAfter?: string; scope?: SummaryScope; search?: string } = {}
     ) => request<Tx[]>('GET', `/transactions/${familyId}${query(opts)}`),
     trend: (familyId: string, range: TrendRange, tzOffset: number, scope: SummaryScope = 'family') =>
         request<Trend>('GET', `/transactions/${familyId}/trend${query({ range, tzOffset, scope })}`),
     summary: (familyId: string, month: string, tzOffset: number, scope: SummaryScope = 'family') =>
         request<Summary>('GET', `/transactions/${familyId}/summary${query({ month, tzOffset, scope })}`),
     addTransaction: (input: TxInput) => request<{ id: string }>('POST', '/transactions', input),
+    addTransactionsBatch: (familyId: string, items: Omit<TxInput, 'familyId'>[]) =>
+        request<{ added: number; skipped: number; ids: string[] }>('POST', '/transactions/batch', { familyId, items }),
     updateTransaction: (id: string, input: Partial<Omit<TxInput, 'familyId'>>) =>
         request<{ message: string }>('PUT', `/transactions/${id}`, input),
     deleteTransaction: (id: string) => request<{ message: string }>('DELETE', `/transactions/${id}`),
@@ -111,8 +133,8 @@ export const api = {
     goals: (familyId: string) => request<Goal[]>('GET', `/goals/${familyId}`),
     addGoal: (input: { familyId: string; title: string; targetAmount: number; deadline?: string }) =>
         request<{ id: string }>('POST', '/goals', input),
-    contributeToGoal: (goalId: string, amount: number) =>
-        request<{ currentAmount: number; completed: boolean }>('PUT', '/goals/update', { goalId, amount }),
+    contributeToGoal: (goalId: string, amount: number, recordTransaction = false, paymentMethod?: string | null) =>
+        request<{ currentAmount: number; completed: boolean }>('PUT', '/goals/update', { goalId, amount, recordTransaction, paymentMethod }),
     updateGoal: (id: string, input: { title?: string; targetAmount?: number; deadline?: string | null }) =>
         request<{ message: string }>('PUT', `/goals/${id}`, input),
     deleteGoal: (id: string) => request<{ message: string }>('DELETE', `/goals/${id}`),
@@ -126,14 +148,36 @@ export const api = {
         amount: number;
         dueDate?: string;
         note?: string;
+        recordTransaction?: boolean;
+        paymentMethod?: string | null;
     }) => request<{ id: string }>('POST', '/loans', input),
-    repayLoan: (id: string, amount?: number) =>
+    repayLoan: (id: string, amount?: number, recordTransaction = false, paymentMethod?: string | null) =>
         request<{ repaidAmount: number; outstanding: number; status: 'open' | 'settled' }>(
             'PUT',
             `/loans/${id}/repay`,
-            amount === undefined ? {} : { amount }
+            { ...(amount === undefined ? {} : { amount }), recordTransaction, paymentMethod }
         ),
+    updateLoan: (id: string, input: { person?: string; amount?: number; dueDate?: string | null; note?: string }) =>
+        request<{ message: string }>('PUT', `/loans/${id}`, input),
     deleteLoan: (id: string) => request<{ message: string }>('DELETE', `/loans/${id}`),
+
+    recurring: (familyId: string) => request<RecurringTx[]>('GET', `/recurring/${familyId}`),
+    addRecurring: (input: {
+        familyId: string;
+        amount: number;
+        type: TxType;
+        category: string;
+        description?: string;
+        frequency: string;
+        startDate?: string;
+        paymentMethod?: string | null;
+        autoRecord?: boolean;
+    }) => request<{ id: string }>('POST', '/recurring', input),
+    updateRecurring: (id: string, input: Partial<RecurringTx>) =>
+        request<{ message: string }>('PUT', `/recurring/${id}`, input),
+    deleteRecurring: (id: string) => request<{ message: string }>('DELETE', `/recurring/${id}`),
+    recordRecurring: (id: string, paymentMethod?: string | null) =>
+        request<{ message: string; transactionId: string; nextRunDate: string }>('POST', `/recurring/${id}/record`, { paymentMethod }),
 
     budgets: (familyId: string) => request<Budget[]>('GET', `/budgets/${familyId}`),
     setBudget: (familyId: string, category: string, limit: number) =>

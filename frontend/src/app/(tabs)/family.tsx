@@ -1,16 +1,29 @@
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
-import { BellRing, Check, ChevronRight, Copy, HandCoins, LogOut, Palette, PiggyBank, RefreshCw, Share2, Target, UserCheck, UserMinus, Users } from 'lucide-react-native';
+import { BellRing, Check, ChevronRight, Copy, Download, HandCoins, LogOut, MessageSquare, Palette, PiggyBank, Plus, RefreshCw, Repeat, Share2, Tag, Target, Trash2, UserCheck, UserMinus, Users } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, Share, StyleSheet, Switch, View } from 'react-native';
-import { Avatar, ErrorBanner, Field, Glass, PillButton, Screen, SectionHeader, Sheet, T } from '@/components/ui';
+import { Avatar, Chip, ErrorBanner, Field, Glass, IconButton, PillButton, Screen, SectionHeader, Segmented, Sheet, SuccessBanner, T } from '@/components/ui';
 import { activePalette, colors, fonts, PALETTE_LIST, paletteName, radius, savePalette, space, type PaletteId } from '@/constants/theme';
 import { useAuth, useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
 import { api } from '@/lib/api';
 import { confirmAction } from '@/lib/dialog';
+import { exportTransactionsCsv } from '@/lib/export';
 import { restartApp } from '@/lib/restart';
 import { remindersEnabled, remindersSupported, setRemindersEnabled } from '@/lib/notifications';
+import type { TxType } from '@/lib/types';
+
+const CATEGORY_TINTS = [
+    '#2B8A5F', // Emerald
+    '#2B66E0', // Blue
+    '#E8590C', // Orange
+    '#D6336C', // Pink
+    '#7048E8', // Purple
+    '#0C8599', // Cyan
+    '#B5651D', // Brown
+    '#495057', // Charcoal
+];
 
 export default function Family() {
     const { me, refresh, signOut } = useAuth();
@@ -27,6 +40,22 @@ export default function Family() {
     const [renamingFamily, setRenamingFamily] = useState(false);
     const [familyDraft, setFamilyDraft] = useState('');
     const [name, setName] = useState(me?.displayName ?? '');
+
+    // Custom categories
+    const [categorySheet, setCategorySheet] = useState(false);
+    const [catName, setCatName] = useState('');
+    const [catType, setCatType] = useState<TxType>('expense');
+    const [catTint, setCatTint] = useState(CATEGORY_TINTS[0]);
+    const [catBusy, setCatBusy] = useState(false);
+    const [catError, setCatError] = useState<string | null>(null);
+
+    // Export CSV
+    const [exportSheet, setExportSheet] = useState(false);
+    const [exportRange, setExportRange] = useState<'all' | 'year' | 'month'>('all');
+    const [exportType, setExportType] = useState<'all' | TxType>('all');
+    const [exportBusy, setExportBusy] = useState(false);
+    const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+    const [exportError, setExportError] = useState<string | null>(null);
 
     // Every colour is read once at start-up, so a new palette is saved and the app restarts to wear it.
     const choosePalette = async (id: PaletteId) => {
@@ -52,6 +81,67 @@ export default function Family() {
 
     const family = data?.family;
     const code = family?.inviteCode ?? me?.family?.inviteCode ?? '';
+
+    const handleAddCategory = async () => {
+        const trimmed = catName.trim();
+        if (trimmed.length < 2) return setCatError('Name must be at least 2 characters');
+        setCatBusy(true);
+        setCatError(null);
+        try {
+            await api.addCustomCategory(familyId, { name: trimmed, type: catType, tint: catTint });
+            setCatName('');
+            await reload();
+        } catch (e) {
+            setCatError((e as Error).message);
+        } finally {
+            setCatBusy(false);
+        }
+    };
+
+    const handleDeleteCategory = async (catId: string, catItemName: string) => {
+        if (!(await confirmAction('Delete category?', `Category "${catItemName}" will be removed.`, 'Delete', true))) return;
+        try {
+            await api.deleteCustomCategory(familyId, catId);
+            await reload();
+        } catch (e) {
+            setError((e as Error).message);
+        }
+    };
+
+    const handleExport = async () => {
+        setExportBusy(true);
+        setExportError(null);
+        setExportSuccess(null);
+        try {
+            const now = new Date();
+            let from: string | undefined;
+            if (exportRange === 'month') {
+                from = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1)).toISOString();
+            } else if (exportRange === 'year') {
+                from = new Date(Date.UTC(now.getFullYear(), 0, 1)).toISOString();
+            }
+
+            const queryType = exportType === 'all' ? undefined : exportType;
+            const txs = await api.transactions(familyId, { from, type: queryType, limit: 1000 });
+
+            if (txs.length === 0) {
+                setExportError('No transactions found for the selected range.');
+                return;
+            }
+
+            const result = await exportTransactionsCsv(txs, family?.name || 'Family');
+            if (result.success) {
+                const actionLabel = result.method === 'download' ? 'Downloaded' : result.method === 'share' ? 'Shared' : 'Copied to clipboard';
+                setExportSuccess(`${actionLabel} ${txs.length} transactions.`);
+            } else {
+                setExportError(result.error || 'Failed to export CSV.');
+            }
+        } catch (e) {
+            setExportError((e as Error).message);
+        } finally {
+            setExportBusy(false);
+        }
+    };
 
     const guard = async (task: () => Promise<unknown>) => {
         setError(null);
@@ -126,7 +216,25 @@ export default function Family() {
             <Glass style={{ paddingVertical: 4 }}>
                 <NavRow Icon={Target} label="Goals" hint="Save for what matters" onPress={() => router.push('/goals')} />
                 <NavRow Icon={HandCoins} label="Loans" hint="Money lent and borrowed" onPress={() => router.push('/loans')} />
-                <NavRow Icon={PiggyBank} label="Budgets" hint="Monthly limits by category" onPress={() => router.push('/budgets')} last />
+                <NavRow Icon={PiggyBank} label="Budgets" hint="Monthly limits by category" onPress={() => router.push('/budgets')} />
+                <NavRow Icon={Repeat} label="Recurring Bills" hint="Rent, bills, subscriptions" onPress={() => router.push('/recurring')} />
+                <NavRow Icon={Tag} label="Custom Categories" hint="Personalize transaction categories" onPress={() => setCategorySheet(true)} />
+                <NavRow
+                    Icon={Download}
+                    label="Export to CSV"
+                    hint="Download backup & spreadsheet"
+                    onPress={() => { setExportSuccess(null); setExportError(null); setExportSheet(true); }}
+                    last={Platform.OS !== 'android' && !__DEV__}
+                />
+                {(Platform.OS === 'android' || __DEV__) && (
+                    <NavRow
+                        Icon={MessageSquare}
+                        label="Extract from SMS"
+                        hint="Scan messages & import bank transactions"
+                        onPress={() => router.push('/sms-import')}
+                        last
+                    />
+                )}
             </Glass>
 
             <SectionHeader title="Members" />
@@ -288,6 +396,152 @@ export default function Family() {
                                 setRenaming(false);
                             });
                         }}
+                    />
+                </View>
+            </Sheet>
+
+            {/* ── Custom Categories Sheet ── */}
+            <Sheet visible={categorySheet} onClose={() => setCategorySheet(false)} title="Custom Categories">
+                <View style={{ gap: space.lg }}>
+                    <ErrorBanner message={catError} />
+
+                    <View>
+                        <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>
+                            FAMILY CATEGORIES
+                        </T>
+                        {(family?.customCategories ?? []).length === 0 ? (
+                            <T variant="small" color={colors.inkSoft} style={{ fontStyle: 'italic', marginBottom: 8 }}>
+                                No custom categories yet. Add one below to use it across transactions, budgets, and insights.
+                            </T>
+                        ) : (
+                            <View style={{ gap: 8, marginBottom: 8 }}>
+                                {(family?.customCategories ?? []).map((cat) => (
+                                    <View
+                                        key={cat.id}
+                                        style={{
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            paddingVertical: 10,
+                                            paddingHorizontal: 12,
+                                            borderRadius: radius.md,
+                                            backgroundColor: colors.white,
+                                            borderWidth: 1,
+                                            borderColor: colors.hairline,
+                                        }}
+                                    >
+                                        <View
+                                            style={{
+                                                width: 14,
+                                                height: 14,
+                                                borderRadius: 7,
+                                                backgroundColor: cat.tint || colors.ink,
+                                                marginRight: 10,
+                                            }}
+                                        />
+                                        <View style={{ flex: 1 }}>
+                                            <T variant="body" style={{ fontFamily: fonts.bold }}>{cat.name}</T>
+                                            <T variant="tiny" color={colors.muted}>{cat.type.toUpperCase()}</T>
+                                        </View>
+                                        <IconButton
+                                            Icon={Trash2}
+                                            size={36}
+                                            label={`Delete ${cat.name}`}
+                                            onPress={() => handleDeleteCategory(cat.id, cat.name)}
+                                        />
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+                    </View>
+
+                    <View style={{ borderTopWidth: 1, borderTopColor: colors.hairline, paddingTop: space.md, gap: space.md }}>
+                        <T variant="heading" style={{ fontSize: 16 }}>Add New Category</T>
+                        <Segmented
+                            value={catType}
+                            onChange={setCatType}
+                            options={[
+                                { value: 'expense', label: 'Expense' },
+                                { value: 'income', label: 'Income' },
+                            ]}
+                        />
+                        <Field
+                            label="Category Name"
+                            value={catName}
+                            onChangeText={setCatName}
+                            placeholder="e.g. Pet Care, SIP, Freelance"
+                            maxLength={30}
+                        />
+
+                        <View>
+                            <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>
+                                COLOR ACCENT
+                            </T>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                                {CATEGORY_TINTS.map((tint) => (
+                                    <Pressable
+                                        key={tint}
+                                        accessibilityRole="button"
+                                        onPress={() => setCatTint(tint)}
+                                        style={{
+                                            width: 32,
+                                            height: 32,
+                                            borderRadius: 16,
+                                            backgroundColor: tint,
+                                            borderWidth: catTint === tint ? 3 : 1,
+                                            borderColor: catTint === tint ? colors.ink : 'transparent',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                        }}
+                                    >
+                                        {catTint === tint && <Check size={16} color={colors.white} strokeWidth={3} />}
+                                    </Pressable>
+                                ))}
+                            </View>
+                        </View>
+
+                        <PillButton label="Add Category" onPress={handleAddCategory} loading={catBusy} />
+                    </View>
+                </View>
+            </Sheet>
+
+            {/* ── Export CSV Sheet ── */}
+            <Sheet visible={exportSheet} onClose={() => setExportSheet(false)} title="Export to CSV">
+                <View style={{ gap: space.lg }}>
+                    <SuccessBanner message={exportSuccess} />
+                    <ErrorBanner message={exportError} />
+
+                    <T variant="small" color={colors.inkSoft}>
+                        Export your family's transactions as a standard CSV spreadsheet file for Excel, Google Sheets, or personal backup.
+                    </T>
+
+                    <View>
+                        <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>
+                            TIME RANGE
+                        </T>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <Chip label="All time" active={exportRange === 'all'} onPress={() => setExportRange('all')} />
+                            <Chip label="This year" active={exportRange === 'year'} onPress={() => setExportRange('year')} />
+                            <Chip label="This month" active={exportRange === 'month'} onPress={() => setExportRange('month')} />
+                        </View>
+                    </View>
+
+                    <View>
+                        <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>
+                            TRANSACTION TYPE
+                        </T>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <Chip label="All" active={exportType === 'all'} onPress={() => setExportType('all')} />
+                            <Chip label="Expenses only" active={exportType === 'expense'} onPress={() => setExportType('expense')} />
+                            <Chip label="Income only" active={exportType === 'income'} onPress={() => setExportType('income')} />
+                        </View>
+                    </View>
+
+                    <PillButton
+                        label="Download CSV"
+                        Icon={Download}
+                        onPress={handleExport}
+                        loading={exportBusy}
+                        style={{ marginTop: space.sm }}
                     />
                 </View>
             </Sheet>

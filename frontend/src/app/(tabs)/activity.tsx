@@ -10,22 +10,13 @@ import { colors, fonts, radius, space } from '@/constants/theme';
 import { useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
 import { api } from '@/lib/api';
-import { EXPENSE_CATEGORIES, getCategory, INCOME_CATEGORIES } from '@/lib/categories';
-import { dayLabel, money, moneyShort, monthKey, monthLabel, shiftMonth, tzOffset } from '@/lib/format';
+import { categoriesFor, getCategory } from '@/lib/categories';
+import { dayLabel, money, moneyShort, monthBounds, monthKey, monthLabel, shiftMonth, tzOffset } from '@/lib/format';
 import type { Tx, TxType, TrendRange } from '@/lib/types';
 
 const PAGE = 30;
 // A month or a category is a bounded slice of history, so load it in one go instead of paging.
 const WHOLE = 200;
-
-// A month as the real instants it covers in the phone's own timezone.
-const monthBounds = (key: string) => {
-    const [y, m] = key.split('-').map(Number);
-    return {
-        from: new Date(y, m - 1, 1).toISOString(),
-        to: new Date(new Date(y, m, 1).getTime() - 1).toISOString(),
-    };
-};
 
 const PIE_LABEL: Record<TrendRange, string> = { day: '7 DAYS', week: '8 WEEKS', month: '6 MONTHS' };
 
@@ -41,10 +32,18 @@ export default function Activity() {
     const [sheet, setSheet] = useState<'category' | 'month' | null>(null);
     const [searching, setSearching] = useState(false);
     const [query, setQuery] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
     const [pieRange, setPieRange] = useState<TrendRange>('month');
     const [more, setMore] = useState<Tx[]>([]);
     const [exhausted, setExhausted] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSearch(searching ? query.trim() : '');
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [query, searching]);
 
     useEffect(() => {
         if (!params.at) return;
@@ -59,13 +58,22 @@ export default function Activity() {
     // Firestore only has an index for category on its own, so with a type or "just me" it is filtered here.
     const serverCategory = category && !type && !mine ? category : undefined;
     const pageSize = range || serverCategory ? WHOLE : PAGE;
-    const queryOpts = { type, category: serverCategory, scope: mine ? ('me' as const) : undefined, from: range?.from, to: range?.to, limit: pageSize };
+    const queryOpts = {
+        type,
+        category: serverCategory,
+        scope: mine ? ('me' as const) : undefined,
+        from: range?.from,
+        to: range?.to,
+        limit: pageSize,
+        search: debouncedSearch || undefined,
+    };
 
     const { data, loading, error, reload, refreshing, pullToRefresh } = useAsync(
         () => api.transactions(familyId, queryOpts),
-        [familyId, type, serverCategory, mine, month]
+        [familyId, type, serverCategory, mine, month, debouncedSearch]
     );
     const pie = useAsync(() => api.trend(familyId, pieRange, tzOffset()), [familyId, pieRange]);
+    const family = useAsync(() => api.family(familyId), [familyId]);
 
     // A fresh first page, or a different filter, invalidates whatever was paged in after it.
     useEffect(() => {
@@ -112,12 +120,18 @@ export default function Activity() {
     const filtering = !!category || !!month || mine || !!needle;
     const filteredHere = !!needle || (!!category && !serverCategory);
 
+    const customCats = family.data?.customCategories ?? [];
     const categoryOptions =
         filter === 'expense'
-            ? EXPENSE_CATEGORIES
+            ? categoriesFor('expense', customCats)
             : filter === 'income'
-              ? INCOME_CATEGORIES
-              : [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES.filter((c) => !EXPENSE_CATEGORIES.some((e) => e.name === c.name))];
+              ? categoriesFor('income', customCats)
+              : [
+                    ...categoriesFor('expense', customCats),
+                    ...categoriesFor('income', customCats).filter(
+                        (c) => !categoriesFor('expense', customCats).some((e) => e.name === c.name)
+                    ),
+                ];
     const monthOptions = useMemo(() => Array.from({ length: 12 }, (_, i) => shiftMonth(monthKey(), -i)), []);
 
     const loadMore = async () => {
@@ -306,7 +320,25 @@ export default function Activity() {
                         {group.rows.map((tx, i) => (
                             <View key={tx.id}>
                                 {i > 0 ? <View style={styles.divider} /> : null}
-                                <TxRow flat tx={tx} showTime onPress={() => router.push(`/add?id=${tx.id}`)} />
+                                <TxRow
+                                    flat
+                                    tx={tx}
+                                    showTime
+                                    onPress={() =>
+                                        router.push({
+                                            pathname: '/add',
+                                            params: {
+                                                id: tx.id,
+                                                type: tx.type,
+                                                amount: String(tx.amount),
+                                                category: tx.category,
+                                                description: tx.description || '',
+                                                paymentMethod: tx.paymentMethod || '',
+                                                date: tx.date,
+                                            },
+                                        })
+                                    }
+                                />
                             </View>
                         ))}
                     </Glass>

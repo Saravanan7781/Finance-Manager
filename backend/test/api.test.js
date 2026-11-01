@@ -221,6 +221,10 @@ test('transactions: add, list, filter, edit, delete', async () => {
     const ranged = await call('GET', `/api/transactions/${familyId}?from=2026-10-06T00:00:00.000Z`, { as: owner });
     assert.equal(ranged.body.length, 2);
 
+    const searched = await call('GET', `/api/transactions/${familyId}?search=milk`, { as: owner });
+    assert.equal(searched.body.length, 1);
+    assert.equal(searched.body[0].description, 'Milk');
+
     const page1 = await call('GET', `/api/transactions/${familyId}?limit=2`, { as: owner });
     const page2 = await call('GET', `/api/transactions/${familyId}?limit=2&startAfter=${page1.body[1].id}`, { as: owner });
     assert.equal(page1.body.length, 2);
@@ -247,6 +251,28 @@ test('transactions: duplicate SMS captures are rejected', async () => {
     assert.equal((await addTx(owner, familyId, body)).status, 201);
     assert.equal((await addTx(owner, familyId, body)).status, 409);
     assert.equal((await addTx(owner, familyId, { source: 'sms', dedupeKey: 'HDFCBK-124' })).status, 201);
+});
+
+test('transactions: batch import adds multiple transactions and skips existing dedupeKeys', async () => {
+    const { owner, familyId } = await setup();
+    await addTx(owner, familyId, { source: 'sms', dedupeKey: 'SMS-EXISTING-1', amount: 50 });
+
+    const batchRes = await call('POST', '/api/transactions/batch', {
+        as: owner,
+        body: {
+            familyId,
+            items: [
+                { amount: 150, type: 'expense', category: 'Food', description: 'Swiggy', dedupeKey: 'SMS-EXISTING-1' },
+                { amount: 300, type: 'expense', category: 'Groceries', description: 'Blinkit', dedupeKey: 'SMS-NEW-2' },
+                { amount: 5000, type: 'income', category: 'Salary', description: 'Client', dedupeKey: 'SMS-NEW-3' },
+            ],
+        },
+    });
+
+    assert.equal(batchRes.status, 201);
+    assert.equal(batchRes.body.added, 2);
+    assert.equal(batchRes.body.skipped, 1);
+    assert.equal(batchRes.body.ids.length, 2);
 });
 
 test('summary totals, category shares and month comparison', async () => {
@@ -496,4 +522,185 @@ test('profile name can be updated', async () => {
     assert.equal((await call('PATCH', '/api/me', { as: uid, body: { displayName: 'A' } })).status, 400);
     assert.equal((await call('PATCH', '/api/me', { as: uid, body: { displayName: 'Asha R' } })).status, 200);
     assert.equal((await call('GET', '/api/me', { as: uid })).body.displayName, 'Asha R');
+});
+
+test('goal contribution can record in transactions', async () => {
+    const { owner, familyId } = await setup();
+    const goalRes = await call('POST', '/api/goals', {
+        as: owner,
+        body: { familyId, title: 'Trip Fund', targetAmount: 5000 },
+    });
+    const goalId = goalRes.body.id;
+
+    // Contribute with recordTransaction: true
+    const contRes = await call('PUT', '/api/goals/update', {
+        as: owner,
+        body: { goalId, amount: 1500, recordTransaction: true, paymentMethod: 'UPI' },
+    });
+    assert.equal(contRes.status, 200);
+    assert.equal(contRes.body.currentAmount, 1500);
+
+    // Verify transaction was created
+    const txsRes = await call('GET', `/api/transactions/${familyId}`, { as: owner });
+    assert.equal(txsRes.status, 200);
+    const goalTx = txsRes.body.find((t) => t.category === 'Savings');
+    assert.ok(goalTx);
+    assert.equal(goalTx.amount, 1500);
+    assert.equal(goalTx.type, 'expense');
+    assert.equal(goalTx.paymentMethod, 'UPI');
+});
+
+test('loan repayment can record in transactions', async () => {
+    const { owner, familyId } = await setup();
+    const loanRes = await call('POST', '/api/loans', {
+        as: owner,
+        body: { familyId, direction: 'lent', person: 'Ravi', amount: 2000 },
+    });
+    const loanId = loanRes.body.id;
+
+    // Repay partial with recordTransaction: true
+    const repayRes = await call('PUT', `/api/loans/${loanId}/repay`, {
+        as: owner,
+        body: { amount: 800, recordTransaction: true, paymentMethod: 'Card' },
+    });
+    assert.equal(repayRes.status, 200);
+    assert.equal(repayRes.body.repaidAmount, 800);
+
+    // Verify transaction was created as income (since direction was 'lent')
+    const txsRes = await call('GET', `/api/transactions/${familyId}`, { as: owner });
+    assert.equal(txsRes.status, 200);
+    const loanTx = txsRes.body.find((t) => t.category === 'Loan repayment');
+    assert.ok(loanTx);
+    assert.equal(loanTx.amount, 800);
+    assert.equal(loanTx.type, 'income');
+    assert.equal(loanTx.paymentMethod, 'Card');
+});
+
+test('custom categories can be added and deleted', async () => {
+    const { owner, member, familyId } = await setup();
+
+    const addRes = await call('POST', `/api/family/${familyId}/categories`, {
+        as: owner,
+        body: { name: 'Pet Care', type: 'expense', tint: '#10B981', icon: 'PawPrint' },
+    });
+    assert.equal(addRes.status, 201);
+    assert.equal(addRes.body.name, 'Pet Care');
+
+    // Duplicate name rejected
+    const dupRes = await call('POST', `/api/family/${familyId}/categories`, {
+        as: owner,
+        body: { name: 'pet care', type: 'expense' },
+    });
+    assert.equal(dupRes.status, 409);
+
+    // Family details include the new custom category
+    const famRes = await call('GET', `/api/family/${familyId}`, { as: member });
+    assert.equal(famRes.status, 200);
+    assert.equal(famRes.body.customCategories.length, 1);
+    assert.equal(famRes.body.customCategories[0].name, 'Pet Care');
+
+    // Delete category
+    const catId = addRes.body.id;
+    const delRes = await call('DELETE', `/api/family/${familyId}/categories/${catId}`, { as: member });
+    assert.equal(delRes.status, 200);
+
+    const famAfter = await call('GET', `/api/family/${familyId}`, { as: owner });
+    assert.equal(famAfter.body.customCategories.length, 0);
+});
+
+test('recurring transactions: create, record instance, delete', async () => {
+    const { owner, familyId } = await setup();
+
+    const createRes = await call('POST', '/api/recurring', {
+        as: owner,
+        body: {
+            familyId,
+            amount: 799,
+            type: 'expense',
+            category: 'Bills',
+            description: 'Netflix subscription',
+            frequency: 'monthly',
+            paymentMethod: 'Card',
+            autoRecord: false,
+        },
+    });
+    assert.equal(createRes.status, 201);
+    const recId = createRes.body.id;
+
+    // List recurring
+    const listRes = await call('GET', `/api/recurring/${familyId}`, { as: owner });
+    assert.equal(listRes.status, 200);
+    assert.equal(listRes.body.length, 1);
+    assert.equal(listRes.body[0].description, 'Netflix subscription');
+
+    // Record an instance manually
+    const recInst = await call('POST', `/api/recurring/${recId}/record`, {
+        as: owner,
+        body: { paymentMethod: 'UPI' },
+    });
+    assert.equal(recInst.status, 200);
+    assert.ok(recInst.body.transactionId);
+
+    // Check transaction was posted
+    const txsRes = await call('GET', `/api/transactions/${familyId}`, { as: owner });
+    assert.equal(txsRes.status, 200);
+    const tx = txsRes.body.find((t) => t.source === 'recurring');
+    assert.ok(tx);
+    assert.equal(tx.amount, 799);
+    assert.equal(tx.paymentMethod, 'UPI');
+
+    // Delete recurring
+    const delRes = await call('DELETE', `/api/recurring/${recId}`, { as: owner });
+    assert.equal(delRes.status, 200);
+});
+
+test('edge cases and error resilience', async () => {
+    const { owner, familyId } = await setup();
+
+    // 1. Invalid transaction updates (invalid date, negative amount, empty update)
+    const tx = await addTx(owner, familyId, { amount: 50, category: 'Food' });
+    const badDate = await call('PUT', `/api/transactions/${tx.body.id}`, { as: owner, body: { date: 'invalid-date' } });
+    assert.equal(badDate.status, 400);
+
+    const badAmt = await call('PUT', `/api/transactions/${tx.body.id}`, { as: owner, body: { amount: -20 } });
+    assert.equal(badAmt.status, 400);
+
+    const badAmtStr = await call('PUT', `/api/transactions/${tx.body.id}`, { as: owner, body: { amount: 'not-a-number' } });
+    assert.equal(badAmtStr.status, 400);
+
+    // 2. Invalid loan updates
+    const loan = await call('POST', '/api/loans', { as: owner, body: { familyId, person: 'Friend', amount: 100 } });
+    assert.equal(loan.status, 201);
+
+    const badLoanAmt = await call('PUT', `/api/loans/${loan.body.id}`, { as: owner, body: { amount: -50 } });
+    assert.equal(badLoanAmt.status, 400);
+
+    const badLoanDue = await call('PUT', `/api/loans/${loan.body.id}`, { as: owner, body: { dueDate: 'invalid-due' } });
+    assert.equal(badLoanDue.status, 400);
+
+    const badRepay = await call('PUT', `/api/loans/${loan.body.id}/repay`, { as: owner, body: { amount: -10 } });
+    assert.equal(badRepay.status, 400);
+
+    // 3. Invalid goal updates
+    const goal = await call('POST', '/api/goals', { as: owner, body: { familyId, title: 'Trip', targetAmount: 500 } });
+    assert.equal(goal.status, 201);
+
+    const badGoalAmt = await call('PUT', `/api/goals/${goal.body.id}`, { as: owner, body: { targetAmount: -100 } });
+    assert.equal(badGoalAmt.status, 400);
+
+    const badGoalDue = await call('PUT', `/api/goals/${goal.body.id}`, { as: owner, body: { deadline: 'invalid-deadline' } });
+    assert.equal(badGoalDue.status, 400);
+
+    // 4. Invalid recurring updates
+    const rec = await call('POST', '/api/recurring', {
+        as: owner,
+        body: { familyId, amount: 200, category: 'Bills', description: 'Power', frequency: 'monthly' },
+    });
+    assert.equal(rec.status, 201);
+
+    const badRecFreq = await call('PUT', `/api/recurring/${rec.body.id}`, { as: owner, body: { frequency: 'invalid-freq' } });
+    assert.equal(badRecFreq.status, 400);
+
+    const badRecDate = await call('PUT', `/api/recurring/${rec.body.id}`, { as: owner, body: { nextRunDate: 'invalid-date' } });
+    assert.equal(badRecDate.status, 400);
 });

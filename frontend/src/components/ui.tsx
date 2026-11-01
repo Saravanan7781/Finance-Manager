@@ -381,23 +381,38 @@ export function Field({
     error,
     style,
     dark = false,
+    right,
     ...input
-}: TextInputProps & { label: string; error?: string | null; dark?: boolean; style?: StyleProp<ViewStyle> }) {
+}: TextInputProps & {
+    label: string;
+    error?: string | null;
+    dark?: boolean;
+    style?: StyleProp<ViewStyle>;
+    right?: ReactNode;
+}) {
     return (
         <View style={style}>
             <T variant="tiny" color={dark ? 'rgba(255,255,255,0.7)' : colors.muted} style={styles.fieldLabel}>
                 {label.toUpperCase()}
             </T>
-            <TextInput
-                placeholderTextColor={colors.faint}
-                {...input}
-                accessibilityLabel={label}
-                style={[
-                    styles.input,
-                    input.multiline && { minHeight: 76, textAlignVertical: 'top', paddingTop: 14 },
-                    error ? { borderColor: colors.expense } : null,
-                ]}
-            />
+            <View style={{ position: 'relative', justifyContent: 'center' }}>
+                <TextInput
+                    placeholderTextColor={colors.faint}
+                    {...input}
+                    accessibilityLabel={label}
+                    style={[
+                        styles.input,
+                        input.multiline && { minHeight: 76, textAlignVertical: 'top', paddingTop: 14 },
+                        error ? { borderColor: colors.expense } : null,
+                        right ? { paddingRight: 50 } : null,
+                    ]}
+                />
+                {right ? (
+                    <View style={{ position: 'absolute', right: 10 }}>
+                        {right}
+                    </View>
+                ) : null}
+            </View>
             {error ? (
                 <T variant="small" color={colors.expense} style={{ marginTop: 4 }}>
                     {error}
@@ -421,6 +436,17 @@ export function ErrorBanner({ message, onRetry }: { message: string | null; onRe
                     </T>
                 </Pressable>
             ) : null}
+        </View>
+    );
+}
+
+export function SuccessBanner({ message }: { message: string | null }) {
+    if (!message) return null;
+    return (
+        <View style={styles.successBanner} accessibilityLiveRegion="polite">
+            <T variant="small" color={colors.income} style={{ flex: 1, fontFamily: fonts.semibold }}>
+                {message}
+            </T>
         </View>
     );
 }
@@ -653,6 +679,15 @@ const styles = StyleSheet.create({
         padding: space.md,
         borderRadius: radius.md,
         backgroundColor: 'rgba(179,38,30,0.1)',
+        marginBottom: space.md,
+    },
+    successBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: space.md,
+        padding: space.md,
+        borderRadius: radius.md,
+        backgroundColor: 'rgba(31,143,70,0.12)',
         marginBottom: space.md,
     },
     empty: { alignItems: 'center', justifyContent: 'center', paddingVertical: space.xxl * 1.5, paddingHorizontal: space.xl },

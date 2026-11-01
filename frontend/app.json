@@ -13,6 +13,9 @@
     },
     "android": {
       "package": "com.familyfinance.app",
+      "permissions": [
+        "android.permission.READ_SMS"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#C9E8D6",
         "foregroundImage": "./assets/android-icon-foreground.png",

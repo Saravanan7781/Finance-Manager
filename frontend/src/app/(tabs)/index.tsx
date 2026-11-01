@@ -24,15 +24,16 @@ export default function Home() {
     const [selected, setSelected] = useState<number | null>(null);
 
     const { data, loading, error, reload, refreshing, pullToRefresh } = useAsync(async () => {
-        const [summary, trend, recent, goals, loans] = await Promise.all([
+        const [summary, trend, recent, goals, loans, recurring] = await Promise.all([
             api.summary(familyId, monthKey(), tzOffset(), scope),
             api.trend(familyId, range, tzOffset(), scope),
             api.transactions(familyId, { limit: 4, scope }),
             api.goals(familyId),
             api.loans(familyId, 'open'),
+            api.recurring(familyId),
         ]);
         syncReminders(loans, goals).catch(() => {});
-        return { summary, buckets: trend.buckets, recent, goals, loans };
+        return { summary, buckets: trend.buckets, recent, goals, loans, recurring };
     }, [familyId, scope, range]);
 
     // Tapping a bar swaps "Latest" for everything that bar adds up, fetched by the bar's own time span.
@@ -61,6 +62,8 @@ export default function Home() {
 
     const summary = data?.summary;
     const overdue = (data?.loans ?? []).filter((l) => l.dueDate && daysUntil(l.dueDate) < 0).length;
+    const dueRecurring = (data?.recurring ?? []).filter((r) => r.status === 'active' && daysUntil(r.nextRunDate) <= 0).length;
+    const totalAlerts = overdue + dueRecurring;
 
     return (
         <Screen bottomInset={96} refreshing={refreshing} onRefresh={pullToRefresh}>
@@ -70,7 +73,12 @@ export default function Home() {
                     <T variant="small" color={colors.inkSoft}>{me?.family?.name}</T>
                     <T variant="heading" style={{ fontSize: 20 }}>Hi, {firstName(me?.displayName ?? '')}!</T>
                 </View>
-                <IconButton Icon={Bell} label={overdue ? `${overdue} overdue loans` : 'Loans and reminders'} badge={overdue > 0} onPress={() => router.push('/loans')} />
+                <IconButton
+                    Icon={Bell}
+                    label={totalAlerts ? `${totalAlerts} alerts` : 'Loans and reminders'}
+                    badge={totalAlerts > 0}
+                    onPress={() => router.push(dueRecurring > 0 ? '/recurring' : '/loans')}
+                />
                 <IconButton Icon={Sparkles} label="Ask about your money" onPress={() => router.push('/ask')} />
             </View>
 
@@ -152,7 +160,24 @@ export default function Home() {
                 <View style={{ gap: 10 }}>
                     {listed.map((tx, i) => (
                         <Reveal key={tx.id} index={i}>
-                            <TxRow tx={tx} showTime={!!bucket && range !== 'day'} onPress={() => router.push(`/add?id=${tx.id}`)} />
+                            <TxRow
+                                tx={tx}
+                                showTime={!!bucket && range !== 'day'}
+                                onPress={() =>
+                                    router.push({
+                                        pathname: '/add',
+                                        params: {
+                                            id: tx.id,
+                                            type: tx.type,
+                                            amount: String(tx.amount),
+                                            category: tx.category,
+                                            description: tx.description || '',
+                                            paymentMethod: tx.paymentMethod || '',
+                                            date: tx.date,
+                                        },
+                                    })
+                                }
+                            />
                         </Reveal>
                     ))}
                 </View>

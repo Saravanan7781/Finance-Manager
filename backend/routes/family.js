@@ -21,5 +21,7 @@ router.get('/:familyId/requests', requireAuth, familyController.listRequests);
 router.post('/:familyId/invite', requireAuth, familyController.regenerateInvite);
 router.put('/:familyId/admin', requireAuth, transferAdminValidation, familyController.transferAdmin);
 router.delete('/:familyId/members/:userId', requireAuth, familyController.removeMember);
+router.post('/:familyId/categories', requireAuth, familyController.addCategory);
+router.delete('/:familyId/categories/:categoryId', requireAuth, familyController.deleteCategory);
 
 module.exports = router;

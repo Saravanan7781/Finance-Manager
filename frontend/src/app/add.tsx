@@ -1,83 +1,153 @@
+import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams } from 'expo-router';
-import { MessageSquareText, Trash2 } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
+import { Calendar, MessageSquare, Plus, Sparkles, Trash2 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { Pressable, TextInput, View } from 'react-native';
+import { Platform, Pressable, TextInput, View } from 'react-native';
+import { DatePickerSheet } from '@/components/DatePickerSheet';
 import { Header } from '@/components/Header';
-import { Chip, ErrorBanner, Field, Glass, IconButton, PillButton, Screen, Segmented, T } from '@/components/ui';
+import { Chip, ErrorBanner, Field, Glass, IconButton, PillButton, Screen, Segmented, SuccessBanner, T } from '@/components/ui';
 import { colors, fonts, radius, space } from '@/constants/theme';
 import { useFamilyId } from '@/context/auth';
 import { api } from '@/lib/api';
-import { categoriesFor, PAYMENT_METHODS } from '@/lib/categories';
+import { categoriesFor, normalizeCategory, PAYMENT_METHODS } from '@/lib/categories';
 import { confirmAction } from '@/lib/dialog';
 import { CURRENCY } from '@/lib/config';
-import { fromDateInput, toDateInput } from '@/lib/format';
+import { formatAmountInput, fromDateInput, parseAmountInput, toDateInput } from '@/lib/format';
 import { parseBankSms } from '@/lib/sms';
-import type { TxType } from '@/lib/types';
+import type { CustomCategory, TxType } from '@/lib/types';
 
 export default function AddTransaction() {
-    const params = useLocalSearchParams<{ type?: string; id?: string }>();
+    const params = useLocalSearchParams<{
+        type?: string;
+        id?: string;
+        amount?: string;
+        category?: string;
+        description?: string;
+        paymentMethod?: string;
+        date?: string;
+    }>();
     const familyId = useFamilyId();
     const editing = params.id;
 
     const [type, setType] = useState<TxType>(params.type === 'income' ? 'income' : 'expense');
-    const [amount, setAmount] = useState('');
-    const [category, setCategory] = useState('');
-    const [description, setDescription] = useState('');
-    const [method, setMethod] = useState<string | null>(null);
-    const [dateText, setDateText] = useState(toDateInput(new Date()));
+    const [amount, setAmount] = useState(params.amount ? formatAmountInput(String(params.amount)) : '');
+    const [category, setCategory] = useState(params.category ? normalizeCategory(params.category) : '');
+    const [description, setDescription] = useState(params.description ?? '');
+    const [method, setMethod] = useState<string | null>(params.paymentMethod || null);
+    const [dateText, setDateText] = useState(
+        params.date ? toDateInput(new Date(params.date)) : toDateInput(new Date())
+    );
+    const [calendarOpen, setCalendarOpen] = useState(false);
+    const [addAnother, setAddAnother] = useState(false);
+    const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
     const [dedupeKey, setDedupeKey] = useState<string | null>(null);
-    const [smsOpen, setSmsOpen] = useState(false);
-    const [sms, setSms] = useState('');
+    const [source, setSource] = useState<'manual' | 'sms'>('manual');
+    const [success, setSuccess] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
-    // Editing: the API has no single-transaction read, so find it in the family's recent list.
+    // Fetch custom categories
     useEffect(() => {
-        if (!editing) return;
+        if (!familyId) return;
+        api.family(familyId)
+            .then((f) => setCustomCategories(f.customCategories || []))
+            .catch(() => {});
+    }, [familyId]);
+
+    const pasteFromSms = async () => {
+        try {
+            const text = await Clipboard.getStringAsync();
+            if (!text || text.trim().length < 5) {
+                return setError('Clipboard is empty. Copy a bank or UPI SMS alert first.');
+            }
+
+            const parsed = parseBankSms(text);
+            if (!parsed) {
+                return setError("Couldn't read transaction details from clipboard. Ensure you copied a bank/UPI SMS.");
+            }
+
+            setType(parsed.type);
+            setAmount(formatAmountInput(String(parsed.amount)));
+            if (parsed.merchant) setDescription(parsed.merchant);
+            if (parsed.paymentMethod) setMethod(parsed.paymentMethod);
+            setDedupeKey(parsed.dedupeKey);
+            setSource('sms');
+            setError(null);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            setSuccess(`Parsed ${parsed.type === 'expense' ? 'debit' : 'credit'} of ${CURRENCY}${parsed.amount}`);
+            setTimeout(() => setSuccess(null), 3500);
+        } catch {
+            setError('Could not access clipboard.');
+        }
+    };
+
+    // Sync from params whenever they are available
+    useEffect(() => {
+        if (params.type) setType(params.type === 'income' ? 'income' : 'expense');
+        if (params.amount) setAmount(formatAmountInput(String(params.amount)));
+        if (params.category) setCategory(normalizeCategory(params.category));
+        if (params.description !== undefined) setDescription(params.description);
+        if (params.paymentMethod !== undefined) setMethod(params.paymentMethod || null);
+        if (params.date) setDateText(toDateInput(new Date(params.date)));
+    }, [params.id, params.type, params.amount, params.category, params.description, params.paymentMethod, params.date]);
+
+    // Fallback: If editing and details were not passed via params, fetch from recent transactions
+    useEffect(() => {
+        if (!editing || params.amount || !familyId) return;
         api.transactions(familyId, { limit: 200 })
             .then((list) => {
                 const tx = list.find((t) => t.id === editing);
                 if (!tx) return setError('That transaction no longer exists.');
                 setType(tx.type);
-                setAmount(String(tx.amount));
-                setCategory(tx.category);
+                setAmount(formatAmountInput(String(tx.amount)));
+                setCategory(normalizeCategory(tx.category));
                 setDescription(tx.description);
                 setMethod(tx.paymentMethod);
                 setDateText(toDateInput(new Date(tx.date)));
             })
             .catch((e) => setError((e as Error).message));
-    }, [editing, familyId]);
+    }, [editing, familyId, params.amount]);
 
     const changeType = (next: TxType) => {
         setType(next);
-        if (!categoriesFor(next).some((c) => c.name === category)) setCategory('');
+        if (!categoriesFor(next, customCategories).some((c) => c.name === category)) setCategory('');
     };
 
-    const fillFromSms = () => {
-        const parsed = parseBankSms(sms);
-        if (!parsed) return setError("Couldn't find an amount and a debit or credit in that message.");
-        setError(null);
-        setType(parsed.type);
-        setAmount(String(parsed.amount));
-        setMethod(parsed.paymentMethod);
-        if (parsed.merchant) setDescription(parsed.merchant);
-        setCategory((c) => (categoriesFor(parsed.type).some((x) => x.name === c) ? c : ''));
-        setDedupeKey(parsed.dedupeKey);
-        setSmsOpen(false);
-    };
-
-    const save = async () => {
-        const value = parseFloat(amount.replace(/,/g, ''));
-        const date = fromDateInput(dateText);
+    const save = async (keepOpen = false) => {
+        const value = parseAmountInput(amount);
+        const parsedDate = fromDateInput(dateText);
         if (!(value > 0)) return setError('Enter an amount greater than zero.');
         if (!category) return setError('Pick a category.');
-        if (!date) return setError('Use the date format YYYY-MM-DD, for example 2026-10-29.');
+        if (!parsedDate) return setError('Use the date format YYYY-MM-DD, for example 2026-10-29.');
+
+        const now = new Date();
+        let finalDate = parsedDate;
+        if (dateText === toDateInput(now)) {
+            finalDate = now;
+        } else {
+            finalDate = new Date(
+                parsedDate.getFullYear(),
+                parsedDate.getMonth(),
+                parsedDate.getDate(),
+                now.getHours(),
+                now.getMinutes(),
+                now.getSeconds()
+            );
+        }
 
         setBusy(true);
+        setAddAnother(keepOpen);
         setError(null);
+        setSuccess(null);
         try {
             if (editing) {
-                await api.updateTransaction(editing, { amount: value, type, category, description: description.trim(), paymentMethod: method, date: date.toISOString() });
+                if (params.date && toDateInput(new Date(params.date)) === dateText) {
+                    const orig = new Date(params.date);
+                    if (!isNaN(orig.getTime())) finalDate = orig;
+                }
+                await api.updateTransaction(editing, { amount: value, type, category, description: description.trim(), paymentMethod: method, date: finalDate.toISOString() });
+                router.back();
             } else {
                 await api.addTransaction({
                     familyId,
@@ -86,14 +156,25 @@ export default function AddTransaction() {
                     category,
                     description: description.trim(),
                     paymentMethod: method,
-                    date: date.toISOString(),
-                    ...(dedupeKey ? { source: 'sms' as const, dedupeKey } : {}),
+                    date: finalDate.toISOString(),
+                    source,
+                    dedupeKey,
                 });
+                if (keepOpen) {
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+                    setAmount('');
+                    setDescription('');
+                    setDedupeKey(null);
+                    setSource('manual');
+                    setSuccess(`Added ${category} (${CURRENCY}${value.toFixed(2)})`);
+                    setTimeout(() => setSuccess(null), 3500);
+                } else {
+                    router.back();
+                }
             }
-            router.back();
         } catch (e) {
-            const message = (e as Error).message;
-            setError(message === 'Duplicate transaction' ? 'You already added this message.' : message);
+            setError((e as Error).message);
+        } finally {
             setBusy(false);
         }
     };
@@ -127,13 +208,34 @@ export default function AddTransaction() {
                 ]}
             />
 
+            {!editing && (
+                <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: space.md, flexWrap: 'wrap' }}>
+                    <PillButton
+                        label="Paste SMS alert"
+                        Icon={Sparkles}
+                        variant="glass"
+                        onPress={pasteFromSms}
+                        style={{ minHeight: 36, paddingHorizontal: 14 }}
+                    />
+                    {(Platform.OS === 'android' || __DEV__) && (
+                        <PillButton
+                            label="Extract from SMS"
+                            Icon={MessageSquare}
+                            variant="glass"
+                            onPress={() => router.push('/sms-import')}
+                            style={{ minHeight: 36, paddingHorizontal: 14 }}
+                        />
+                    )}
+                </View>
+            )}
+
             <View style={{ alignItems: 'center', marginVertical: space.xl }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <T variant="display" color={colors.faint}>{CURRENCY}</T>
                     <TextInput
                         accessibilityLabel="Amount"
                         value={amount}
-                        onChangeText={(t) => setAmount(t.replace(/[^0-9.]/g, ''))}
+                        onChangeText={(t) => setAmount((prev) => formatAmountInput(t, prev))}
                         placeholder="0"
                         placeholderTextColor={colors.faint}
                         keyboardType="decimal-pad"
@@ -143,11 +245,12 @@ export default function AddTransaction() {
                 </View>
             </View>
 
+            <SuccessBanner message={success} />
             <ErrorBanner message={error} />
 
             <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>CATEGORY</T>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: space.lg }}>
-                {categoriesFor(type).map((c) => (
+                {categoriesFor(type, customCategories).map((c) => (
                     <Chip key={c.name} label={c.name} Icon={c.Icon} active={category === c.name} onPress={() => setCategory(c.name)} />
                 ))}
             </View>
@@ -165,32 +268,70 @@ export default function AddTransaction() {
                 </View>
 
                 <View>
-                    <Field label="Date" value={dateText} onChangeText={setDateText} placeholder="YYYY-MM-DD" autoCapitalize="none" keyboardType="numbers-and-punctuation" />
+                    <Field
+                        label="Date"
+                        value={dateText}
+                        onChangeText={setDateText}
+                        placeholder="YYYY-MM-DD"
+                        autoCapitalize="none"
+                        keyboardType="numbers-and-punctuation"
+                        right={
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="Open calendar"
+                                hitSlop={8}
+                                onPress={() => setCalendarOpen(true)}
+                                style={{
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: radius.sm,
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    backgroundColor: colors.mint1,
+                                }}
+                            >
+                                <Calendar size={18} color={colors.ink} strokeWidth={2.2} />
+                            </Pressable>
+                        }
+                    />
                     <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                        <Chip label="Today" onPress={() => setDateText(toDateInput(new Date()))} />
-                        <Chip label="Yesterday" onPress={() => setDateText(toDateInput(new Date(Date.now() - 86400000)))} />
+                        <Chip
+                            label="Today"
+                            active={dateText === toDateInput(new Date())}
+                            onPress={() => setDateText(toDateInput(new Date()))}
+                        />
+                        <Chip
+                            label="Yesterday"
+                            active={dateText === toDateInput(new Date(Date.now() - 86400000))}
+                            onPress={() => setDateText(toDateInput(new Date(Date.now() - 86400000)))}
+                        />
                     </View>
                 </View>
             </Glass>
 
-            {!editing ? (
-                <View style={{ marginTop: space.lg }}>
-                    <Pressable accessibilityRole="button" onPress={() => setSmsOpen((o) => !o)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 6 }}>
-                        <MessageSquareText size={18} color={colors.inkSoft} />
-                        <T variant="small" color={colors.inkSoft} style={{ fontFamily: fonts.semibold }}>
-                            {dedupeKey ? 'Filled from a bank SMS' : 'Fill from a bank SMS'}
-                        </T>
-                    </Pressable>
-                    {smsOpen ? (
-                        <Glass style={{ marginTop: 6, gap: space.md, borderRadius: radius.md }}>
-                            <Field label="Paste the message" value={sms} onChangeText={setSms} multiline placeholder="Rs.450.00 debited from a/c XX1234 to SWIGGY on 29-10-26…" />
-                            <PillButton label="Read message" variant="light" onPress={fillFromSms} style={{ minHeight: 46 }} />
-                        </Glass>
-                    ) : null}
-                </View>
-            ) : null}
+            <View style={{ marginTop: space.xl, gap: 10 }}>
+                <PillButton
+                    label={editing ? 'Save changes' : 'Add transaction'}
+                    onPress={() => save(false)}
+                    loading={busy && !addAnother}
+                />
+                {!editing ? (
+                    <PillButton
+                        label="Save & add another"
+                        variant="glass"
+                        Icon={Plus}
+                        onPress={() => save(true)}
+                        loading={busy && addAnother}
+                    />
+                ) : null}
+            </View>
 
-            <PillButton label={editing ? 'Save changes' : 'Add transaction'} onPress={save} loading={busy} style={{ marginTop: space.xl }} />
+            <DatePickerSheet
+                visible={calendarOpen}
+                onClose={() => setCalendarOpen(false)}
+                value={dateText}
+                onChange={setDateText}
+            />
         </Screen>
     );
 }

@@ -159,6 +159,18 @@ class FakeFirestore {
 
     collection(name) { return new CollectionRef(this, name); }
 
+    batch() {
+        const writes = [];
+        return {
+            set: (ref, data, options) => { writes.push(() => ref.set(data, options)); },
+            update: (ref, data) => { writes.push(() => ref.update(data)); },
+            delete: (ref) => { writes.push(() => ref.delete()); },
+            commit: async () => {
+                for (const write of writes) await write();
+            },
+        };
+    }
+
     async runTransaction(fn) {
         const writes = [];
         const tx = {

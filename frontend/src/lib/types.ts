@@ -25,6 +25,15 @@ export interface Member {
     role: 'admin' | 'member';
 }
 
+export interface CustomCategory {
+    id: string;
+    name: string;
+    type: TxType;
+    tint?: string;
+    icon?: string;
+    createdAt?: string;
+}
+
 export interface FamilyDetails {
     id: string;
     name: string;
@@ -32,6 +41,7 @@ export interface FamilyDetails {
     admin: string;
     createdAt: string;
     members: Member[];
+    customCategories?: CustomCategory[];
 }
 
 export interface JoinRequest {
@@ -151,4 +161,26 @@ export interface Budget {
     familyId: string;
     category: string;
     limit: number;
+}
+
+export type RecurringFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+export interface RecurringTx {
+    id: string;
+    familyId: string;
+    createdBy: string;
+    createdByName?: string | null;
+    amount: number;
+    type: TxType;
+    category: string;
+    description: string;
+    frequency: RecurringFrequency;
+    startDate: string;
+    nextRunDate: string;
+    lastRunDate?: string | null;
+    paymentMethod?: string | null;
+    autoRecord: boolean;
+    status: 'active' | 'paused';
+    createdAt: string;
+    updatedAt?: string;
 }

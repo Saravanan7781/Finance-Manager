@@ -1,15 +1,16 @@
 import { useLocalSearchParams } from 'expo-router';
 import { PiggyBank, Plus, Trash2 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Switch, View } from 'react-native';
 import { Header } from '@/components/Header';
-import { Empty, ErrorBanner, Field, Glass, IconButton, Loading, PillButton, Progress, Reveal, Screen, Segmented, Sheet, T } from '@/components/ui';
+import { Chip, Empty, ErrorBanner, Field, Glass, IconButton, Loading, PillButton, Progress, Reveal, Screen, Segmented, Sheet, T } from '@/components/ui';
 import { colors, fonts, space } from '@/constants/theme';
 import { useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
 import { api } from '@/lib/api';
+import { PAYMENT_METHODS } from '@/lib/categories';
 import { confirmAction } from '@/lib/dialog';
-import { daysUntil, fromDateInput, money, shortDate } from '@/lib/format';
+import { daysUntil, formatAmountInput, fromDateInput, money, parseAmountInput, shortDate } from '@/lib/format';
 import type { Goal } from '@/lib/types';
 
 export default function Goals() {
@@ -24,6 +25,8 @@ export default function Goals() {
     const [funding, setFunding] = useState<Goal | null>(null);
     const [mode, setMode] = useState<'add' | 'take'>('add');
     const [amount, setAmount] = useState('');
+    const [recordTx, setRecordTx] = useState(true);
+    const [method, setMethod] = useState<string | null>('UPI');
     const [formError, setFormError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -47,7 +50,7 @@ export default function Goals() {
     };
 
     const create = async () => {
-        const value = parseFloat(target);
+        const value = parseAmountInput(target);
         const due = deadline.trim() ? fromDateInput(deadline) : null;
         if (title.trim().length < 2) return setFormError('Name the goal (at least 2 letters).');
         if (!(value > 0)) return setFormError('Enter the amount you want to reach.');
@@ -63,9 +66,9 @@ export default function Goals() {
     };
 
     const fund = async () => {
-        const value = parseFloat(amount);
+        const value = parseAmountInput(amount);
         if (!funding || !(value > 0)) return setFormError('Enter an amount greater than zero.');
-        const ok = await run(() => api.contributeToGoal(funding.id, mode === 'add' ? value : -value));
+        const ok = await run(() => api.contributeToGoal(funding.id, mode === 'add' ? value : -value, recordTx, recordTx ? method : null));
         if (ok) {
             setFunding(null);
             setAmount('');
@@ -127,7 +130,7 @@ export default function Goals() {
                 <View style={{ gap: space.lg }}>
                     <ErrorBanner message={formError} />
                     <Field label="Goal" value={title} onChangeText={setTitle} placeholder="Goa trip" autoCapitalize="sentences" />
-                    <Field label="Target amount" value={target} onChangeText={(t) => setTarget(t.replace(/[^0-9.]/g, ''))} placeholder="60000" keyboardType="decimal-pad" />
+                    <Field label="Target amount" value={target} onChangeText={(t) => setTarget((prev) => formatAmountInput(t, prev))} placeholder="60,000" keyboardType="decimal-pad" />
                     <Field label="Deadline (optional)" value={deadline} onChangeText={setDeadline} placeholder="YYYY-MM-DD" autoCapitalize="none" keyboardType="numbers-and-punctuation" />
                     <PillButton label="Create goal" onPress={create} loading={busy} />
                 </View>
@@ -137,7 +140,29 @@ export default function Goals() {
                 <View style={{ gap: space.lg }}>
                     <ErrorBanner message={formError} />
                     <Segmented value={mode} onChange={setMode} options={[{ value: 'add', label: 'Add money' }, { value: 'take', label: 'Take out' }]} />
-                    <Field label="Amount" value={amount} onChangeText={(t) => setAmount(t.replace(/[^0-9.]/g, ''))} placeholder="1000" keyboardType="decimal-pad" autoFocus />
+                    <Field label="Amount" value={amount} onChangeText={(t) => setAmount((prev) => formatAmountInput(t, prev))} placeholder="1,000" keyboardType="decimal-pad" autoFocus />
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                        <View style={{ flex: 1, paddingRight: space.md }}>
+                            <T variant="heading" style={{ fontSize: 15 }}>Record in Activity</T>
+                            <T variant="tiny" color={colors.inkSoft}>
+                                {mode === 'add' ? 'Log as savings expense' : 'Log as savings withdrawal'}
+                            </T>
+                        </View>
+                        <Switch value={recordTx} onValueChange={setRecordTx} trackColor={{ false: colors.mint2, true: colors.ink }} />
+                    </View>
+
+                    {recordTx && (
+                        <View>
+                            <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>PAID VIA</T>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                                {PAYMENT_METHODS.map((m) => (
+                                    <Chip key={m} label={m} active={method === m} onPress={() => setMethod(method === m ? null : m)} />
+                                ))}
+                            </View>
+                        </View>
+                    )}
+
                     <PillButton label={mode === 'add' ? 'Add to goal' : 'Take out'} onPress={fund} loading={busy} />
                 </View>
             </Sheet>

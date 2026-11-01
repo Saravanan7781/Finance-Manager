@@ -5,6 +5,7 @@ const { requireAuth } = require('../middleware/auth');
 const { transactionValidation, transactionUpdateValidation } = require('../middleware/validate');
 
 router.post('/', requireAuth, transactionValidation, transactionController.addTransaction);
+router.post('/batch', requireAuth, transactionController.addBatchTransactions);
 router.get('/:familyId/summary', requireAuth, transactionController.getSummary);
 router.get('/:familyId/trend', requireAuth, transactionController.getTrend);
 router.get('/:familyId', requireAuth, transactionController.getTransactions);

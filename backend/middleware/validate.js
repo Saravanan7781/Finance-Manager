@@ -78,6 +78,8 @@ const goalEditValidation = [
 const goalUpdateValidation = [
     body('goalId').trim().notEmpty().withMessage('Goal ID is required'),
     body('amount').isFloat().withMessage('Amount must be a number'),
+    body('recordTransaction').optional().isBoolean(),
+    body('paymentMethod').optional({ values: 'null' }).isString(),
     handleValidationErrors,
 ];
 
@@ -89,6 +91,8 @@ const loanValidation = [
     body('amount').isFloat({ min: 0.01 }).withMessage('Amount must be a positive number'),
     body('dueDate').optional({ values: 'null' }).isISO8601().withMessage('Invalid due date format'),
     body('note').optional().trim().isLength({ max: 300 }).withMessage('Note too long'),
+    body('recordTransaction').optional().isBoolean(),
+    body('paymentMethod').optional({ values: 'null' }).isString(),
     handleValidationErrors,
 ];
 
@@ -103,6 +107,8 @@ const loanUpdateValidation = [
 
 const loanRepayValidation = [
     body('amount').optional().isFloat({ min: 0.01 }).withMessage('Amount must be a positive number'),
+    body('recordTransaction').optional().isBoolean(),
+    body('paymentMethod').optional({ values: 'null' }).isString(),
     handleValidationErrors,
 ];
 

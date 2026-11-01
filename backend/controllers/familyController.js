@@ -29,6 +29,8 @@ exports.createFamily = async (req, res, next) => {
                 inviteCode,
                 admin: userId,
                 members: [userId],
+                balance: 0,
+                memberBalances: { [userId]: 0 },
                 createdAt: new Date(),
             });
             transaction.set(userRef, { familyId: familyRef.id, role: 'admin' }, { merge: true });
@@ -109,6 +111,7 @@ exports.getFamily = async (req, res, next) => {
             admin: family.admin,
             createdAt: family.createdAt,
             members,
+            customCategories: family.customCategories || [],
         });
     } catch (error) {
         next(error);
@@ -268,6 +271,69 @@ exports.regenerateInvite = async (req, res, next) => {
         await db.collection('families').doc(req.params.familyId).update({ inviteCode });
 
         res.status(200).json({ inviteCode });
+    } catch (error) {
+        next(error);
+    }
+};
+
+exports.addCategory = async (req, res, next) => {
+    try {
+        const { familyId } = req.params;
+        const { name, type, tint, icon } = req.body;
+        const userId = req.user.uid;
+
+        const family = await getFamilyForMember(familyId, userId);
+        const trimmed = (name || '').trim();
+        if (!trimmed || trimmed.length < 2 || trimmed.length > 30) {
+            throw new HttpError(400, 'Category name must be 2-30 characters');
+        }
+        if (!['expense', 'income'].includes(type)) {
+            throw new HttpError(400, 'Category type must be expense or income');
+        }
+
+        const existing = family.customCategories || [];
+        if (existing.some((c) => c.name.toLowerCase() === trimmed.toLowerCase())) {
+            throw new HttpError(409, 'A category with this name already exists');
+        }
+
+        const newCategory = {
+            id: `cat_${Date.now()}`,
+            name: trimmed,
+            type,
+            tint: tint || (type === 'income' ? '#2B8A5F' : '#E8590C'),
+            icon: icon || 'Tag',
+            createdAt: new Date(),
+        };
+
+        const familyRef = db.collection('families').doc(familyId);
+        await familyRef.update({
+            customCategories: [...existing, newCategory],
+        });
+
+        res.status(201).json(newCategory);
+    } catch (error) {
+        next(error);
+    }
+};
+
+exports.deleteCategory = async (req, res, next) => {
+    try {
+        const { familyId, categoryId } = req.params;
+        const userId = req.user.uid;
+
+        const family = await getFamilyForMember(familyId, userId);
+        const existing = family.customCategories || [];
+        const filtered = existing.filter((c) => c.id !== categoryId && c.name.toLowerCase() !== categoryId.toLowerCase());
+        if (filtered.length === existing.length) {
+            throw new HttpError(404, 'Category not found');
+        }
+
+        const familyRef = db.collection('families').doc(familyId);
+        await familyRef.update({
+            customCategories: filtered,
+        });
+
+        res.status(200).json({ message: 'Category deleted' });
     } catch (error) {
         next(error);
     }

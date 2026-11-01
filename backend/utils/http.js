@@ -57,6 +57,47 @@ const parseLimit = (value, fallback = 50, max = 200) => {
     return Math.min(n, max);
 };
 
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// Updates rolling balance and member balances on the family document
+const updateFamilyBalance = async (familyId, userId, delta) => {
+    try {
+        const familyRef = db.collection('families').doc(familyId);
+        const fDoc = await familyRef.get();
+        if (fDoc.exists) {
+            const fData = fDoc.data();
+            const curBalance = typeof fData.balance === 'number' ? fData.balance : 0;
+            const mBalances = fData.memberBalances || {};
+            const curMember = typeof mBalances[userId] === 'number' ? mBalances[userId] : 0;
+            await familyRef.update({
+                balance: round2(curBalance + delta),
+                memberBalances: {
+                    ...mBalances,
+                    [userId]: round2(curMember + delta),
+                },
+                updatedAt: new Date(),
+            });
+        }
+    } catch (err) {
+        if (process.env.NODE_ENV !== 'test') {
+            console.error('Failed to update family balance:', err.message);
+        }
+    }
+};
+
+// Generates searchable keywords and prefixes for fast server-side search
+const buildKeywords = (...inputs) => {
+    const text = inputs.filter(Boolean).join(' ').toLowerCase();
+    const words = text.split(/[^a-z0-9]+/).filter((w) => w.length >= 2);
+    const prefixes = new Set();
+    words.forEach((w) => {
+        for (let i = 2; i <= Math.min(w.length, 15); i++) {
+            prefixes.add(w.slice(0, i));
+        }
+    });
+    return Array.from(prefixes).slice(0, 50);
+};
+
 module.exports = {
     HttpError,
     serializeDoc,
@@ -64,4 +105,6 @@ module.exports = {
     getFamilyForAdmin,
     getOwnedDoc,
     parseLimit,
+    updateFamilyBalance,
+    buildKeywords,
 };

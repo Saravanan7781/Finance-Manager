@@ -2,7 +2,7 @@
 // enough to preview every screen with believable data and no Firebase or server.
 
 import { ApiError } from './api';
-import type { Budget, FamilyDetails, Goal, JoinRequest, Loan, Me, Summary, SummaryScope, Trend, TrendRange, Tx } from './types';
+import type { Budget, CustomCategory, FamilyDetails, Goal, JoinRequest, Loan, Me, RecurringTx, Summary, SummaryScope, Trend, TrendRange, Tx } from './types';
 
 const DAY = 86400000;
 const iso = (daysAgo: number, hour = 12) => {
@@ -25,7 +25,7 @@ const id = (prefix: string) => `${prefix}${++counter}`;
 
 const seed: [number, 'income' | 'expense', string, number, string, string, string][] = [
     [0, 'expense', 'Groceries', 604.36, 'BigBasket order', 'u2', 'UPI'],
-    [0, 'expense', 'Cafes and Restaurants', 428, 'Filter Coffee House', 'u1', 'Card'],
+    [0, 'expense', 'Food', 428, 'Filter Coffee House', 'u1', 'Card'],
     [1, 'income', 'Salary', 85000, 'October salary', 'u1', 'Bank'],
     [1, 'expense', 'Travel', 212.5, 'Metro recharge', 'u3', 'UPI'],
     [2, 'expense', 'Clothes and Shoes', 1296.65, 'Nike', 'u2', 'Card'],
@@ -33,7 +33,7 @@ const seed: [number, 'income' | 'expense', string, number, string, string, strin
     [4, 'expense', 'Groceries', 1240, 'Fresh Mart', 'u2', 'Cash'],
     [5, 'expense', 'Sport', 1799, 'Cult.fit pass', 'u3', 'Card'],
     [6, 'expense', 'Bills', 2450, 'Electricity', 'u1', 'UPI'],
-    [8, 'expense', 'Cafes and Restaurants', 1560, 'Dinner at Murugan Idli', 'u1', 'UPI'],
+    [8, 'expense', 'Food', 1560, 'Dinner at Murugan Idli', 'u1', 'UPI'],
     [9, 'expense', 'Groceries', 980.4, 'Nilgiris', 'u2', 'UPI'],
     [11, 'expense', 'Travel', 3200, 'Cab to airport', 'u3', 'Card'],
     [12, 'income', 'Business', 12000, 'Freelance payout', 'u3', 'Bank'],
@@ -45,7 +45,7 @@ const seed: [number, 'income' | 'expense', string, number, string, string, strin
     [33, 'income', 'Salary', 85000, 'September salary', 'u1', 'Bank'],
     [36, 'expense', 'Groceries', 1800, 'Monthly stock-up', 'u2', 'UPI'],
     [40, 'expense', 'Rent', 22000, 'September rent', 'u1', 'Bank'],
-    [44, 'expense', 'Cafes and Restaurants', 2100, 'Family lunch', 'u3', 'Card'],
+    [44, 'expense', 'Food', 2100, 'Family lunch', 'u3', 'Card'],
     [47, 'expense', 'Travel', 4100, 'Train tickets', 'u1', 'UPI'],
     [52, 'expense', 'Clothes and Shoes', 3200, 'Festival shopping', 'u2', 'Card'],
 ];
@@ -79,8 +79,18 @@ let loans: Loan[] = [
 
 let budgets: Budget[] = [
     { id: 'b1', familyId: FAMILY, category: 'Groceries', limit: 6000 },
-    { id: 'b2', familyId: FAMILY, category: 'Cafes and Restaurants', limit: 3000 },
+    { id: 'b2', familyId: FAMILY, category: 'Food', limit: 3000 },
     { id: 'b3', familyId: FAMILY, category: 'Travel', limit: 5000 },
+];
+
+let customCategories: CustomCategory[] = [
+    { id: 'cat1', name: 'Pet Care', type: 'expense', tint: '#10B981', icon: 'Tag', createdAt: iso(60) },
+];
+
+let recurring: RecurringTx[] = [
+    { id: 'rec1', familyId: FAMILY, createdBy: ME, createdByName: 'Prasath', amount: 799, type: 'expense', category: 'Bills', description: 'Netflix Premium', frequency: 'monthly', startDate: iso(15), nextRunDate: iso(-15), lastRunDate: iso(15), paymentMethod: 'Card', autoRecord: false, status: 'active', createdAt: iso(60) },
+    { id: 'rec2', familyId: FAMILY, createdBy: ME, createdByName: 'Prasath', amount: 22000, type: 'expense', category: 'Rent', description: 'Apartment rent', frequency: 'monthly', startDate: iso(14), nextRunDate: iso(-16), lastRunDate: iso(14), paymentMethod: 'Bank', autoRecord: false, status: 'active', createdAt: iso(60) },
+    { id: 'rec3', familyId: FAMILY, createdBy: ME, createdByName: 'Prasath', amount: 85000, type: 'income', category: 'Salary', description: 'Monthly salary', frequency: 'monthly', startDate: iso(1), nextRunDate: iso(-29), lastRunDate: iso(1), paymentMethod: 'Bank', autoRecord: false, status: 'active', createdAt: iso(90) },
 ];
 
 let requests: JoinRequest[] = [
@@ -245,6 +255,24 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
             if (seg[2] === 'requests') return requests;
             if (seg[2] === 'invite') { inviteCode = Math.random().toString(16).slice(2, 10).toUpperCase(); return { inviteCode }; }
             if (seg[2] === 'admin') { admin = body.userId; return { message: 'Admin rights transferred' }; }
+            if (seg[2] === 'categories') {
+                if (method === 'POST') {
+                    const newCat: CustomCategory = {
+                        id: id('cat'),
+                        name: body.name.trim(),
+                        type: body.type,
+                        tint: body.tint || '#10B981',
+                        icon: body.icon || 'Tag',
+                        createdAt: new Date().toISOString(),
+                    };
+                    customCategories.push(newCat);
+                    return newCat;
+                }
+                if (method === 'DELETE') {
+                    customCategories = customCategories.filter((c) => c.id !== seg[3] && c.name.toLowerCase() !== seg[3].toLowerCase());
+                    return { message: 'Category deleted' };
+                }
+            }
             if (seg[2] === 'members') {
                 const idx = members.findIndex((m) => m.uid === seg[3]);
                 if (idx >= 0) members.splice(idx, 1);
@@ -253,6 +281,7 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
             const details: FamilyDetails = {
                 id: FAMILY, name: familyName, inviteCode, admin, createdAt: iso(120),
                 members: members.map((m) => ({ ...m, role: m.uid === admin ? 'admin' : 'member' })),
+                customCategories,
             };
             return details;
         }
@@ -289,6 +318,14 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
             if (q.category) list = list.filter((t) => t.category === q.category);
             if (q.from) list = list.filter((t) => t.date >= q.from);
             if (q.to) list = list.filter((t) => t.date <= q.to);
+            if (q.search || q.q) {
+                const s = String(q.search || q.q).toLowerCase();
+                list = list.filter((t) =>
+                    [t.description, t.category, t.paymentMethod, t.createdByName].some((txt) =>
+                        (txt ?? '').toLowerCase().includes(s)
+                    )
+                );
+            }
             if (q.startAfter) {
                 const idx = list.findIndex((t) => t.id === q.startAfter);
                 if (idx >= 0) list = list.slice(idx + 1);
@@ -305,7 +342,24 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
             if (seg[1] === 'update') {
                 const goal = goals.find((g) => g.id === body.goalId);
                 if (!goal) throw notFound();
-                goal.currentAmount = Math.max(0, round2(goal.currentAmount + body.amount));
+                const diff = body.amount;
+                goal.currentAmount = Math.max(0, round2(goal.currentAmount + diff));
+                if (body.recordTransaction && diff !== 0) {
+                    txs.unshift({
+                        id: id('t'),
+                        familyId: FAMILY,
+                        createdBy: ME,
+                        createdByName: displayName,
+                        amount: Math.abs(diff),
+                        type: diff > 0 ? 'expense' : 'income',
+                        category: diff > 0 ? 'Savings' : 'Savings withdrawal',
+                        description: diff > 0 ? `Goal contribution: ${goal.title}` : `Goal withdrawal: ${goal.title}`,
+                        paymentMethod: body.paymentMethod || null,
+                        source: 'manual',
+                        date: new Date().toISOString(),
+                        createdAt: new Date().toISOString(),
+                    });
+                }
                 return { currentAmount: goal.currentAmount, completed: goal.currentAmount >= goal.targetAmount };
             }
             if (method === 'PUT') { Object.assign(goals.find((g) => g.id === seg[1]) ?? {}, body); return { message: 'Goal updated' }; }
@@ -321,6 +375,23 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
                     createdAt: new Date().toISOString(), settledAt: null,
                 };
                 loans.unshift(loan);
+                if (body.recordTransaction) {
+                    const isLent = body.direction === 'lent';
+                    txs.unshift({
+                        id: id('t'),
+                        familyId: FAMILY,
+                        createdBy: ME,
+                        createdByName: displayName,
+                        amount: body.amount,
+                        type: isLent ? 'expense' : 'income',
+                        category: isLent ? 'Lent' : 'Other income',
+                        description: isLent ? `Loan to ${body.person}` : `Borrowed from ${body.person}`,
+                        paymentMethod: body.paymentMethod || null,
+                        source: 'manual',
+                        date: new Date().toISOString(),
+                        createdAt: new Date().toISOString(),
+                    });
+                }
                 return { id: loan.id };
             }
             if (seg[2] === 'repay') {
@@ -331,10 +402,89 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
                 loan.repaidAmount = round2(loan.repaidAmount + payment);
                 loan.status = loan.repaidAmount >= loan.amount ? 'settled' : 'open';
                 loan.settledAt = loan.status === 'settled' ? new Date().toISOString() : null;
+
+                if (body.recordTransaction && payment > 0) {
+                    const isLent = loan.direction === 'lent';
+                    txs.unshift({
+                        id: id('t'),
+                        familyId: FAMILY,
+                        createdBy: ME,
+                        createdByName: displayName,
+                        amount: payment,
+                        type: isLent ? 'income' : 'expense',
+                        category: isLent ? 'Loan repayment' : 'Bills',
+                        description: isLent ? `Loan repayment from ${loan.person}` : `Loan repayment to ${loan.person}`,
+                        paymentMethod: body.paymentMethod || null,
+                        source: 'manual',
+                        date: new Date().toISOString(),
+                        createdAt: new Date().toISOString(),
+                    });
+                }
+
                 return { repaidAmount: loan.repaidAmount, outstanding: round2(loan.amount - loan.repaidAmount), status: loan.status };
             }
             if (method === 'DELETE') { loans = loans.filter((l) => l.id !== seg[1]); return { message: 'Loan deleted' }; }
             return q.status ? loans.filter((l) => l.status === q.status) : loans;
+        }
+
+        case 'recurring': {
+            if (method === 'POST') {
+                if (seg[2] === 'record') {
+                    const rec = recurring.find((r) => r.id === seg[1]);
+                    if (!rec) throw notFound();
+                    const now = new Date();
+                    const tx: Tx = {
+                        id: id('t'),
+                        familyId: FAMILY,
+                        createdBy: ME,
+                        createdByName: displayName,
+                        amount: rec.amount,
+                        type: rec.type,
+                        category: rec.category,
+                        description: rec.description ? `${rec.description} (Recurring)` : 'Recurring payment',
+                        paymentMethod: body.paymentMethod || rec.paymentMethod || null,
+                        source: 'manual',
+                        date: now.toISOString(),
+                        createdAt: now.toISOString(),
+                    };
+                    txs.unshift(tx);
+                    const nextDate = new Date(now.getTime() + 30 * DAY).toISOString();
+                    rec.lastRunDate = now.toISOString();
+                    rec.nextRunDate = nextDate;
+                    return { message: 'Transaction recorded', transactionId: tx.id, nextRunDate: nextDate };
+                }
+                const newRec: RecurringTx = {
+                    id: id('rec'),
+                    familyId: FAMILY,
+                    createdBy: ME,
+                    createdByName: displayName,
+                    amount: body.amount,
+                    type: body.type,
+                    category: body.category || 'Bills',
+                    description: (body.description || '').trim(),
+                    frequency: body.frequency || 'monthly',
+                    startDate: body.startDate || new Date().toISOString(),
+                    nextRunDate: body.startDate || new Date().toISOString(),
+                    lastRunDate: null,
+                    paymentMethod: body.paymentMethod || null,
+                    autoRecord: Boolean(body.autoRecord),
+                    status: 'active',
+                    createdAt: new Date().toISOString(),
+                };
+                recurring.unshift(newRec);
+                return { id: newRec.id };
+            }
+            if (method === 'PUT') {
+                const rec = recurring.find((r) => r.id === seg[1]);
+                if (!rec) throw notFound();
+                Object.assign(rec, body);
+                return { message: 'Recurring transaction updated' };
+            }
+            if (method === 'DELETE') {
+                recurring = recurring.filter((r) => r.id !== seg[1]);
+                return { message: 'Recurring transaction deleted' };
+            }
+            return recurring;
         }
 
         case 'budgets': {

@@ -7,15 +7,19 @@ import { colors, space } from '@/constants/theme';
 import { useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
 import { api } from '@/lib/api';
-import { EXPENSE_CATEGORIES, getCategory } from '@/lib/categories';
+import { categoriesFor, getCategory } from '@/lib/categories';
 import { confirmAction } from '@/lib/dialog';
-import { money, monthKey, tzOffset } from '@/lib/format';
+import { formatAmountInput, money, monthKey, parseAmountInput, tzOffset } from '@/lib/format';
 
 export default function Budgets() {
     const familyId = useFamilyId();
     const { data, loading, error, reload, refreshing, pullToRefresh } = useAsync(async () => {
-        const [budgets, summary] = await Promise.all([api.budgets(familyId), api.summary(familyId, monthKey(), tzOffset())]);
-        return { budgets, summary };
+        const [budgets, summary, family] = await Promise.all([
+            api.budgets(familyId),
+            api.summary(familyId, monthKey(), tzOffset()),
+            api.family(familyId),
+        ]);
+        return { budgets, summary, family };
     }, [familyId]);
 
     const [editing, setEditing] = useState(false);
@@ -24,17 +28,17 @@ export default function Budgets() {
     const [formError, setFormError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
-    const spent = (name: string) => data?.summary.byCategory.find((c) => c.category.toLowerCase() === name.toLowerCase())?.total ?? 0;
+    const spent = (name: string) => data?.summary?.byCategory?.find((c) => c.category.toLowerCase() === name.toLowerCase())?.total ?? 0;
 
     const openSheet = (name = '', current = '') => {
         setCategory(name);
-        setLimit(current);
+        setLimit(current ? formatAmountInput(current) : '');
         setFormError(null);
         setEditing(true);
     };
 
     const save = async () => {
-        const value = parseFloat(limit);
+        const value = parseAmountInput(limit);
         if (!category) return setFormError('Pick a category.');
         if (!(value > 0)) return setFormError('Enter a monthly limit greater than zero.');
         setBusy(true);
@@ -61,7 +65,7 @@ export default function Budgets() {
                 {(data?.budgets ?? []).map((budget, i) => {
                     const used = spent(budget.category);
                     const over = used > budget.limit;
-                    const cat = getCategory(budget.category);
+                    const cat = getCategory(budget.category, data?.family?.customCategories);
                     return (
                         <Reveal key={budget.id} index={i}>
                             <Pressable accessibilityRole="button" onPress={() => openSheet(budget.category, String(budget.limit))}>
@@ -84,7 +88,7 @@ export default function Budgets() {
                                         }} />
                                     </View>
                                     <View style={{ marginVertical: space.md }}>
-                                        <Progress value={used / budget.limit} tint={over ? colors.expense : colors.ink} height={10} />
+                                        <Progress value={budget.limit > 0 ? used / budget.limit : 0} tint={over ? colors.expense : colors.ink} height={10} />
                                     </View>
                                     <T variant="small" color={colors.inkSoft}>{money(used)} of {money(budget.limit)}</T>
                                 </Glass>
@@ -98,11 +102,11 @@ export default function Budgets() {
                 <View style={{ gap: space.lg }}>
                     <ErrorBanner message={formError} />
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                        {EXPENSE_CATEGORIES.map((c) => (
+                        {categoriesFor('expense', data?.family?.customCategories).map((c) => (
                             <Chip key={c.name} label={c.name} Icon={c.Icon} active={category === c.name} onPress={() => setCategory(c.name)} />
                         ))}
                     </View>
-                    <Field label="Limit per month" value={limit} onChangeText={(t) => setLimit(t.replace(/[^0-9.]/g, ''))} placeholder="6000" keyboardType="decimal-pad" />
+                    <Field label="Limit per month" value={limit} onChangeText={(t) => setLimit((prev) => formatAmountInput(t, prev))} placeholder="6,000" keyboardType="decimal-pad" />
                     <PillButton label="Save budget" onPress={save} loading={busy} />
                 </View>
             </Sheet>

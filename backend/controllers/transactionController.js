@@ -5,6 +5,8 @@ const {
     getFamilyForMember,
     getOwnedDoc,
     parseLimit,
+    updateFamilyBalance,
+    buildKeywords,
 } = require('../utils/http');
 
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -32,23 +34,129 @@ exports.addTransaction = async (req, res, next) => {
         }
 
         const userDoc = await db.collection('users').doc(userId).get();
+        const userName = userDoc.exists ? userDoc.data().displayName : null;
+        const finalAmount = round2(parsedAmount);
+        const keywords = buildKeywords(description, category, paymentMethod, userName);
+
+        let txDate = new Date();
+        if (date) {
+            const parsedD = new Date(date);
+            if (!isNaN(parsedD.getTime())) txDate = parsedD;
+        }
 
         const transactionRef = await db.collection('transactions').add({
             familyId,
             createdBy: userId,
-            createdByName: userDoc.exists ? userDoc.data().displayName : null,
-            amount: round2(parsedAmount),
+            createdByName: userName,
+            amount: finalAmount,
             type,
             category,
             description: description || '',
             paymentMethod: paymentMethod || null,
             source: source || 'manual',
             dedupeKey: dedupeKey || null,
-            date: date ? new Date(date) : new Date(),
+            keywords,
+            date: txDate,
             createdAt: new Date(),
         });
 
+        // Update rolling balance on family document
+        const delta = type === 'income' ? finalAmount : -finalAmount;
+        await updateFamilyBalance(familyId, userId, delta);
+
         res.status(201).json({ id: transactionRef.id });
+    } catch (error) {
+        next(error);
+    }
+};
+
+exports.addBatchTransactions = async (req, res, next) => {
+    try {
+        const { familyId, items } = req.body;
+        const userId = req.user.uid;
+
+        if (!Array.isArray(items) || items.length === 0) {
+            throw new HttpError(400, 'items must be a non-empty array');
+        }
+
+        await getFamilyForMember(familyId, userId);
+
+        const userDoc = await db.collection('users').doc(userId).get();
+        const userName = userDoc.exists ? userDoc.data().displayName : null;
+
+        // Fetch existing dedupe keys to avoid duplicates
+        const dedupeKeys = items.map((it) => it.dedupeKey).filter(Boolean);
+        const existingKeys = new Set();
+
+        if (dedupeKeys.length > 0) {
+            for (let i = 0; i < dedupeKeys.length; i += 30) {
+                const chunk = dedupeKeys.slice(i, i + 30);
+                const snap = await db.collection('transactions')
+                    .where('familyId', '==', familyId)
+                    .where('dedupeKey', 'in', chunk)
+                    .get();
+                snap.forEach((doc) => existingKeys.add(doc.data().dedupeKey));
+            }
+        }
+
+        const batch = db.batch();
+        let totalDelta = 0;
+        let addedCount = 0;
+        let skippedCount = 0;
+        const createdIds = [];
+
+        for (const item of items) {
+            if (item.dedupeKey && existingKeys.has(item.dedupeKey)) {
+                skippedCount++;
+                continue;
+            }
+
+            const parsedAmount = parseFloat(item.amount);
+            if (isNaN(parsedAmount) || parsedAmount <= 0) {
+                skippedCount++;
+                continue;
+            }
+
+            const finalAmount = round2(parsedAmount);
+            const delta = item.type === 'income' ? finalAmount : -finalAmount;
+            totalDelta += delta;
+
+            let txDate = new Date();
+            if (item.date) {
+                const parsedD = new Date(item.date);
+                if (!isNaN(parsedD.getTime())) txDate = parsedD;
+            }
+
+            const keywords = buildKeywords(item.description, item.category, item.paymentMethod, userName);
+            const ref = db.collection('transactions').doc();
+
+            batch.set(ref, {
+                familyId,
+                createdBy: userId,
+                createdByName: userName,
+                amount: finalAmount,
+                type: item.type === 'income' ? 'income' : 'expense',
+                category: item.category || 'Other',
+                description: (item.description || '').trim(),
+                paymentMethod: item.paymentMethod || null,
+                source: item.source || 'sms',
+                dedupeKey: item.dedupeKey || null,
+                keywords,
+                date: txDate,
+                createdAt: new Date(),
+            });
+
+            createdIds.push(ref.id);
+            addedCount++;
+            if (item.dedupeKey) existingKeys.add(item.dedupeKey);
+        }
+
+        if (addedCount > 0) {
+            await batch.commit();
+            await updateFamilyBalance(familyId, userId, round2(totalDelta));
+        }
+
+        res.status(201).json({ added: addedCount, skipped: skippedCount, ids: createdIds });
     } catch (error) {
         next(error);
     }
@@ -57,7 +165,8 @@ exports.addTransaction = async (req, res, next) => {
 exports.getTransactions = async (req, res, next) => {
     try {
         const { familyId } = req.params;
-        const { startAfter, from, to, type, category } = req.query;
+        const { startAfter, from, to, type, category, search, q } = req.query;
+        const searchTerm = (search || q || '').trim();
         const limit = parseLimit(req.query.limit);
 
         await getFamilyForMember(familyId, req.user.uid);
@@ -69,6 +178,10 @@ exports.getTransactions = async (req, res, next) => {
         if (from && !isNaN(new Date(from))) query = query.where('date', '>=', new Date(from));
         if (to && !isNaN(new Date(to))) query = query.where('date', '<=', new Date(to));
 
+        if (searchTerm.length >= 2) {
+            query = query.where('keywords', 'array-contains', searchTerm.toLowerCase());
+        }
+
         query = query.orderBy('date', 'desc').limit(limit);
 
         if (startAfter) {
@@ -79,7 +192,18 @@ exports.getTransactions = async (req, res, next) => {
         }
 
         const snapshot = await query.get();
-        res.status(200).json(snapshot.docs.map(serializeDoc));
+        let items = snapshot.docs.map(serializeDoc);
+
+        if (searchTerm) {
+            const lower = searchTerm.toLowerCase();
+            items = items.filter((tx) =>
+                [tx.description, tx.category, tx.paymentMethod, tx.createdByName].some(
+                    (text) => text && String(text).toLowerCase().includes(lower)
+                )
+            );
+        }
+
+        res.status(200).json(items);
     } catch (error) {
         next(error);
     }
@@ -96,15 +220,44 @@ exports.updateTransaction = async (req, res, next) => {
         const { doc, family } = await getOwnedDoc('transactions', req.params.id, req.user.uid);
         assertCanModify(doc.data(), family, req.user.uid);
 
+        const oldT = doc.data();
         const updates = {};
         ['type', 'category', 'description', 'paymentMethod'].forEach((field) => {
             if (req.body[field] !== undefined) updates[field] = req.body[field];
         });
-        if (req.body.amount !== undefined) updates.amount = round2(parseFloat(req.body.amount));
-        if (req.body.date !== undefined) updates.date = new Date(req.body.date);
+        if (req.body.amount !== undefined) {
+            const parsed = parseFloat(req.body.amount);
+            if (isNaN(parsed) || parsed <= 0) throw new HttpError(400, 'Amount must be greater than zero');
+            updates.amount = round2(parsed);
+        }
+        if (req.body.date !== undefined) {
+            const d = new Date(req.body.date);
+            if (isNaN(d.getTime())) throw new HttpError(400, 'Invalid date');
+            updates.date = d;
+        }
 
         if (Object.keys(updates).length === 0) throw new HttpError(400, 'Nothing to update');
         updates.updatedAt = new Date();
+
+        if (updates.description !== undefined || updates.category !== undefined || updates.paymentMethod !== undefined) {
+            updates.keywords = buildKeywords(
+                updates.description ?? oldT.description,
+                updates.category ?? oldT.category,
+                updates.paymentMethod ?? oldT.paymentMethod,
+                oldT.createdByName
+            );
+        }
+
+        if (updates.amount !== undefined || updates.type !== undefined) {
+            const oldDelta = oldT.type === 'income' ? oldT.amount : -oldT.amount;
+            const newType = updates.type || oldT.type;
+            const newAmount = updates.amount !== undefined ? updates.amount : oldT.amount;
+            const newDelta = newType === 'income' ? newAmount : -newAmount;
+            const delta = round2(newDelta - oldDelta);
+            if (delta !== 0) {
+                await updateFamilyBalance(family.id, oldT.createdBy, delta);
+            }
+        }
 
         await doc.ref.update(updates);
         res.status(200).json({ message: 'Transaction updated' });
@@ -117,6 +270,10 @@ exports.deleteTransaction = async (req, res, next) => {
     try {
         const { doc, family } = await getOwnedDoc('transactions', req.params.id, req.user.uid);
         assertCanModify(doc.data(), family, req.user.uid);
+
+        const oldT = doc.data();
+        const delta = oldT.type === 'income' ? -oldT.amount : oldT.amount;
+        await updateFamilyBalance(family.id, oldT.createdBy, delta);
 
         await doc.ref.delete();
         res.status(200).json({ message: 'Transaction deleted' });
@@ -248,18 +405,25 @@ exports.getSummary = async (req, res, next) => {
         if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
             throw new HttpError(400, 'Month must look like 2026-10');
         }
-        await getFamilyForMember(familyId, req.user.uid);
+        const family = await getFamilyForMember(familyId, req.user.uid);
 
         const current = monthRange(month, tzOffset);
         const previous = monthRange(previousMonth(month), tzOffset);
 
-        const snapshot = await db.collection('transactions')
+        // Targeted query: only read transactions within the month comparison window
+        let query = db.collection('transactions')
             .where('familyId', '==', familyId)
-            .limit(5000)
-            .get();
+            .where('date', '>=', previous.start)
+            .where('date', '<', current.end);
 
-        let allIncome = 0;
-        let allExpense = 0;
+        if (scope === 'me') {
+            query = query.where('createdBy', '==', req.user.uid);
+        }
+
+        query = query.orderBy('date', 'desc');
+
+        const snapshot = await query.get();
+
         let income = 0;
         let expense = 0;
         let previousExpense = 0;
@@ -270,13 +434,8 @@ exports.getSummary = async (req, res, next) => {
 
         snapshot.forEach((doc) => {
             const t = doc.data();
-            if (scope === 'me' && t.createdBy !== req.user.uid) return;
-
             const when = toDate(t.date);
             const isExpense = t.type === 'expense';
-
-            if (isExpense) allExpense += t.amount;
-            else allIncome += t.amount;
 
             if (when >= previous.start && when < previous.end && isExpense) {
                 previousExpense += t.amount;
@@ -307,6 +466,52 @@ exports.getSummary = async (req, res, next) => {
             }
         });
 
+        // Rolling balance retrieval with automatic legacy fallback
+        let balance;
+        if (scope === 'me') {
+            if (family.memberBalances && typeof family.memberBalances[req.user.uid] === 'number') {
+                balance = family.memberBalances[req.user.uid];
+            } else {
+                // Compute from member transactions and cache
+                const myAll = await db.collection('transactions')
+                    .where('familyId', '==', familyId)
+                    .where('createdBy', '==', req.user.uid)
+                    .get();
+                let myNet = 0;
+                myAll.forEach((d) => {
+                    const row = d.data();
+                    myNet += row.type === 'income' ? row.amount : -row.amount;
+                });
+                balance = round2(myNet);
+                const mBalances = family.memberBalances || {};
+                await db.collection('families').doc(familyId).update({
+                    memberBalances: { ...mBalances, [req.user.uid]: balance },
+                });
+            }
+        } else {
+            if (typeof family.balance === 'number') {
+                balance = family.balance;
+            } else {
+                // Compute from all family transactions and cache
+                const all = await db.collection('transactions')
+                    .where('familyId', '==', familyId)
+                    .get();
+                let totalNet = 0;
+                const mBalances = {};
+                all.forEach((d) => {
+                    const row = d.data();
+                    const delta = row.type === 'income' ? row.amount : -row.amount;
+                    totalNet += delta;
+                    mBalances[row.createdBy] = (mBalances[row.createdBy] || 0) + delta;
+                });
+                balance = round2(totalNet);
+                await db.collection('families').doc(familyId).update({
+                    balance,
+                    memberBalances: mBalances,
+                });
+            }
+        }
+
         const categories = Object.values(byCategory)
             .map((c) => ({
                 category: c.category,
@@ -320,7 +525,7 @@ exports.getSummary = async (req, res, next) => {
             month,
             scope,
             tzOffset,
-            balance: round2(allIncome - allExpense),
+            balance: round2(balance),
             income: round2(income),
             expense: round2(expense),
             net: round2(income - expense),
