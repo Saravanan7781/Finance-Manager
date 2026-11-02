@@ -43,6 +43,8 @@ function Routes() {
                 <Stack.Screen name="goals" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="loans" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="budgets" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="recurring" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="sms-import" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="requests" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="ask" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
             </Stack.Protected>

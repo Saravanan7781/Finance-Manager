@@ -27,7 +27,7 @@ export default function Recurring() {
     const params = useLocalSearchParams<{ new?: string }>();
 
     const { data, loading, error, reload, refreshing, pullToRefresh } = useAsync(
-        () => api.recurring(familyId),
+        () => (familyId ? api.recurring(familyId) : Promise.resolve([])),
         [familyId]
     );
 

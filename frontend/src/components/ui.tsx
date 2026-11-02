@@ -6,6 +6,7 @@ import {
     AccessibilityInfo,
     ActivityIndicator,
     Animated,
+    Dimensions,
     Easing,
     KeyboardAvoidingView,
     Modal,
@@ -577,16 +578,26 @@ export function Sheet({
     children: ReactNode;
 }) {
     const insets = useSafeAreaInsets();
+    const windowHeight = Dimensions.get('window').height;
+    const maxSheetHeight = Math.min(windowHeight * 0.88, 720);
+
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <KeyboardAvoidingView style={styles.sheetRoot} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
                 <Pressable style={styles.sheetBackdrop} onPress={onClose} accessibilityLabel="Close" />
-                <View style={[styles.sheet, { paddingBottom: insets.bottom + space.xl }]}>
+                <View style={[styles.sheet, { maxHeight: maxSheetHeight, paddingBottom: insets.bottom + space.md }]}>
                     <View style={styles.sheetHandle} />
-                    <T variant="title" style={{ marginBottom: space.lg }}>
+                    <T variant="title" style={{ marginBottom: space.md }}>
                         {title}
                     </T>
-                    {children}
+                    <ScrollView
+                        showsVerticalScrollIndicator={true}
+                        keyboardShouldPersistTaps="handled"
+                        contentContainerStyle={{ paddingBottom: space.xl }}
+                        bounces={false}
+                    >
+                        {children}
+                    </ScrollView>
                 </View>
             </KeyboardAvoidingView>
         </Modal>

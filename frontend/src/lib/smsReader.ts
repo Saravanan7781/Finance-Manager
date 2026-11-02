@@ -57,10 +57,13 @@ export async function scanSmsInbox(options?: {
     // On non-android or if native module not compiled into runtime (e.g. web or Expo Go)
     if (!isNative) {
         if (options?.useSampleIfUnavailable) {
-            const parsed = extractTransactionsFromSmsList(SAMPLE_INDIAN_BANK_SMS);
+            const rawSamples = options?.since
+                ? SAMPLE_INDIAN_BANK_SMS.filter((s) => s.date >= options.since!)
+                : SAMPLE_INDIAN_BANK_SMS;
+            const parsed = extractTransactionsFromSmsList(rawSamples);
             return {
                 transactions: parsed,
-                totalScanned: SAMPLE_INDIAN_BANK_SMS.length,
+                totalScanned: rawSamples.length,
                 permissionDenied: false,
                 isNative: false,
             };
