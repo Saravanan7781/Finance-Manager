@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
+    AlertTriangle,
     ArrowDownLeft,
     ArrowUpRight,
     Calendar,
@@ -13,8 +14,10 @@ import {
     Filter,
     MessageSquare,
     RefreshCw,
+    RotateCcw,
     Sparkles,
     Square,
+    Trash2,
 } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -40,6 +43,7 @@ import { useFamilyId } from '@/context/auth';
 import { api } from '@/lib/api';
 import { categoriesFor, getCategory } from '@/lib/categories';
 import { CURRENCY } from '@/lib/config';
+import { confirmAction } from '@/lib/dialog';
 import { money, timeAgo } from '@/lib/format';
 import { ParsedSms } from '@/lib/sms';
 import { scanSmsInbox } from '@/lib/smsReader';
@@ -68,7 +72,10 @@ export default function SmsImport() {
     const [period, setPeriod] = useState<SmsPeriodFilter>('week');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [undoing, setUndoing] = useState(false);
+    const [deletingAll, setDeletingAll] = useState(false);
     const [items, setItems] = useState<ImportItem[]>([]);
+    const [lastImportBatch, setLastImportBatch] = useState<{ ids: string[]; items: ImportItem[] } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
     const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
@@ -232,17 +239,63 @@ export default function SmsImport() {
             const res = await api.addTransactionsBatch(familyId, payload);
 
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-            setSuccess(`Saved ${res.added} transaction${res.added === 1 ? '' : 's'}${res.skipped > 0 ? ` (${res.skipped} duplicate skipped)` : ''}!`);
+            setSuccess(`Saved ${res.added} transaction${res.added === 1 ? '' : 's'}!`);
 
+            // Store for immediate undo
+            setLastImportBatch({ ids: res.ids, items: toSave });
             setItems((prev) => prev.filter((it) => !it.selected));
-
-            setTimeout(() => {
-                router.back();
-            }, 1800);
         } catch (e) {
             setError((e as Error).message || 'Failed to save transactions.');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleUndo = async () => {
+        if (!lastImportBatch || lastImportBatch.ids.length === 0) return;
+
+        setUndoing(true);
+        setError(null);
+        setSuccess(null);
+
+        try {
+            const res = await api.deleteTransactionsBatch(familyId, lastImportBatch.ids);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            setSuccess(res.message || 'Import undone! Transactions removed.');
+
+            // Put the items back onto the screen
+            setItems((prev) => [...lastImportBatch.items, ...prev]);
+            setLastImportBatch(null);
+        } catch (e) {
+            setError((e as Error).message || 'Failed to undo import.');
+        } finally {
+            setUndoing(false);
+        }
+    };
+
+    const handleDeleteAllSms = async () => {
+        const confirmed = await confirmAction(
+            'Delete all SMS transactions?',
+            'This will permanently remove all transactions in this family that were imported from SMS messages and adjust your family balance.',
+            'Delete All',
+            true
+        );
+        if (!confirmed) return;
+
+        setDeletingAll(true);
+        setError(null);
+        setSuccess(null);
+
+        try {
+            const res = await api.deleteAllSmsTransactions(familyId);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            setSuccess(res.message || `Deleted ${res.deleted} SMS transactions.`);
+            setLastImportBatch(null);
+            await loadAndScan(false, period);
+        } catch (e) {
+            setError((e as Error).message || 'Failed to delete SMS transactions.');
+        } finally {
+            setDeletingAll(false);
         }
     };
 
@@ -269,12 +322,21 @@ export default function SmsImport() {
                 close
                 title="Extract from SMS"
                 right={
-                    <IconButton
-                        Icon={RefreshCw}
-                        label="Rescan SMS"
-                        onPress={() => loadAndScan(false, period)}
-                        disabled={loading || saving}
-                    />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <IconButton
+                            Icon={Trash2}
+                            label="Delete all SMS transactions"
+                            tone="glass"
+                            onPress={handleDeleteAllSms}
+                            disabled={loading || saving || deletingAll}
+                        />
+                        <IconButton
+                            Icon={RefreshCw}
+                            label="Rescan SMS"
+                            onPress={() => loadAndScan(false, period)}
+                            disabled={loading || saving || deletingAll}
+                        />
+                    </View>
                 }
             />
 
@@ -315,6 +377,32 @@ export default function SmsImport() {
             </View>
 
             <View style={{ flex: 1 }}>
+                {/* Undo Notification Banner */}
+                {lastImportBatch && (
+                    <Glass strong style={styles.undoCard}>
+                        <View style={{ flex: 1 }}>
+                            <T variant="heading" style={{ fontSize: 14 }}>
+                                Imported {lastImportBatch.ids.length} transaction{lastImportBatch.ids.length === 1 ? '' : 's'}
+                            </T>
+                            <T variant="tiny" color={colors.inkSoft}>
+                                Added to family records
+                            </T>
+                        </View>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Undo last import"
+                            onPress={handleUndo}
+                            disabled={undoing}
+                            style={styles.undoButton}
+                        >
+                            <RotateCcw size={14} color={colors.ink} />
+                            <T variant="small" style={{ fontFamily: fonts.bold, color: colors.ink }}>
+                                {undoing ? 'Undoing...' : 'Undo'}
+                            </T>
+                        </Pressable>
+                    </Glass>
+                )}
+
                 <SuccessBanner message={success} />
                 <ErrorBanner message={error} onRetry={() => loadAndScan(false, period)} />
 
@@ -563,6 +651,19 @@ export default function SmsImport() {
                                     </Reveal>
                                 );
                             })}
+
+                            {/* Option to clear all previously imported SMS transactions */}
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="Delete all stored SMS transactions"
+                                onPress={handleDeleteAllSms}
+                                style={styles.deleteAllCard}
+                            >
+                                <Trash2 size={16} color={colors.expense} />
+                                <T variant="small" style={{ color: colors.expense, fontFamily: fonts.bold }}>
+                                    Delete all stored SMS transactions
+                                </T>
+                            </Pressable>
                         </ScrollView>
                     </>
                 )}
@@ -579,14 +680,22 @@ export default function SmsImport() {
                                     : `No bank or UPI alerts found for ${PERIODS.find((p) => p.value === period)?.label.toLowerCase()}. Try selecting a wider period.`
                             }
                         />
-                        {!isNativeScanner && (
+                        <View style={{ gap: space.sm, marginTop: space.lg, width: '100%', maxWidth: 320 }}>
+                            {!isNativeScanner && (
+                                <PillButton
+                                    label="Load Sample Bank Alerts"
+                                    Icon={Sparkles}
+                                    onPress={() => loadAndScan(true, period)}
+                                />
+                            )}
                             <PillButton
-                                label="Load Sample Bank Alerts"
-                                Icon={Sparkles}
-                                onPress={() => loadAndScan(true, period)}
-                                style={{ marginTop: space.lg }}
+                                label="Delete All Stored SMS Transactions"
+                                variant="glass"
+                                Icon={Trash2}
+                                onPress={handleDeleteAllSms}
+                                loading={deletingAll}
                             />
-                        )}
+                        </View>
                     </View>
                 )}
 
@@ -676,6 +785,28 @@ const styles = StyleSheet.create({
     },
     periodPillTextInactive: {
         color: colors.inkSoft,
+    },
+    undoCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: space.md,
+        marginBottom: space.sm,
+        borderRadius: radius.md,
+        backgroundColor: `${colors.mint2}99`,
+        borderWidth: 1,
+        borderColor: colors.mint1,
+    },
+    undoButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: radius.pill,
+        backgroundColor: colors.white,
+        borderWidth: 1,
+        borderColor: colors.hairline,
     },
     loadingContainer: {
         flex: 1,
@@ -822,6 +953,18 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0, 0, 0, 0.03)',
         borderLeftWidth: 2,
         borderLeftColor: colors.hairline,
+    },
+    deleteAllCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        padding: space.md,
+        borderRadius: radius.md,
+        backgroundColor: 'rgba(239, 68, 68, 0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.2)',
+        marginTop: space.md,
     },
     floatingBar: {
         position: 'absolute',

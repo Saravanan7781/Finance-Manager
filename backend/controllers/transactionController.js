@@ -162,6 +162,89 @@ exports.addBatchTransactions = async (req, res, next) => {
     }
 };
 
+exports.deleteBatchTransactions = async (req, res, next) => {
+    try {
+        const { familyId, ids } = req.body;
+        const userId = req.user.uid;
+
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new HttpError(400, 'ids must be a non-empty array');
+        }
+
+        await getFamilyForMember(familyId, userId);
+
+        let totalDelta = 0;
+        let deletedCount = 0;
+        const batch = db.batch();
+
+        for (const id of ids) {
+            const docRef = db.collection('transactions').doc(id);
+            const docSnap = await docRef.get();
+            if (!docSnap.exists) continue;
+
+            const data = docSnap.data();
+            if (data.familyId !== familyId) continue;
+
+            const delta = data.type === 'income' ? -data.amount : data.amount;
+            totalDelta += delta;
+            deletedCount++;
+            batch.delete(docRef);
+        }
+
+        if (deletedCount > 0) {
+            await batch.commit();
+            await updateFamilyBalance(familyId, userId, round2(totalDelta));
+        }
+
+        res.status(200).json({ message: `Reverted ${deletedCount} transaction${deletedCount === 1 ? '' : 's'}`, deleted: deletedCount });
+    } catch (error) {
+        next(error);
+    }
+};
+
+exports.deleteAllSmsTransactions = async (req, res, next) => {
+    try {
+        const { familyId } = req.params;
+        const userId = req.user.uid;
+
+        await getFamilyForMember(familyId, userId);
+
+        const snap = await db.collection('transactions')
+            .where('familyId', '==', familyId)
+            .where('source', '==', 'sms')
+            .get();
+
+        if (snap.empty) {
+            return res.status(200).json({ message: 'No SMS transactions found', deleted: 0 });
+        }
+
+        let totalDelta = 0;
+        let deletedCount = 0;
+        const docs = snap.docs;
+
+        for (let i = 0; i < docs.length; i += 400) {
+            const chunk = docs.slice(i, i + 400);
+            const batch = db.batch();
+            for (const doc of chunk) {
+                const data = doc.data();
+                const delta = data.type === 'income' ? -data.amount : data.amount;
+                totalDelta += delta;
+                deletedCount++;
+                batch.delete(doc.ref);
+            }
+            await batch.commit();
+        }
+
+        if (deletedCount > 0) {
+            await updateFamilyBalance(familyId, userId, round2(totalDelta));
+        }
+
+        res.status(200).json({ message: `Deleted ${deletedCount} SMS transaction${deletedCount === 1 ? '' : 's'}`, deleted: deletedCount });
+    } catch (error) {
+        next(error);
+    }
+};
+
 exports.getTransactions = async (req, res, next) => {
     try {
         const { familyId } = req.params;

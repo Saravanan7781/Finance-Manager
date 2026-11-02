@@ -287,6 +287,36 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
         }
 
         case 'transactions': {
+            if (seg[1] === 'batch' && method === 'POST') {
+                const items = body.items || [];
+                const createdIds = [];
+                for (const it of items) {
+                    const tx = {
+                        id: id('t'), familyId: FAMILY, createdBy: ME, createdByName: displayName,
+                        amount: it.amount, type: it.type, category: it.category, description: it.description || '',
+                        paymentMethod: it.paymentMethod || null, source: it.source || 'sms',
+                        date: it.date || new Date().toISOString(), createdAt: new Date().toISOString(),
+                        dedupeKey: it.dedupeKey || null,
+                    };
+                    txs.unshift(tx);
+                    createdIds.push(tx.id);
+                }
+                return { added: items.length, skipped: 0, ids: createdIds };
+            }
+            if (seg[1] === 'batch-delete' && method === 'POST') {
+                const ids = body.ids || [];
+                const before = txs.length;
+                txs = txs.filter((t) => !ids.includes(t.id));
+                const deleted = before - txs.length;
+                return { message: `Reverted ${deleted} transactions`, deleted };
+            }
+            if (seg[1] === 'family' && seg[3] === 'source' && seg[4] === 'sms' && method === 'DELETE') {
+                const before = txs.length;
+                txs = txs.filter((t) => t.source !== 'sms');
+                const deleted = before - txs.length;
+                return { message: `Deleted ${deleted} SMS transactions`, deleted };
+            }
+
             if (method === 'POST') {
                 const tx: Tx = {
                     id: id('t'), familyId: FAMILY, createdBy: ME, createdByName: displayName,

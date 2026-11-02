@@ -129,6 +129,10 @@ export const api = {
     updateTransaction: (id: string, input: Partial<Omit<TxInput, 'familyId'>>) =>
         request<{ message: string }>('PUT', `/transactions/${id}`, input),
     deleteTransaction: (id: string) => request<{ message: string }>('DELETE', `/transactions/${id}`),
+    deleteTransactionsBatch: (familyId: string, ids: string[]) =>
+        request<{ message: string; deleted: number }>('POST', '/transactions/batch-delete', { familyId, ids }),
+    deleteAllSmsTransactions: (familyId: string) =>
+        request<{ message: string; deleted: number }>('DELETE', `/transactions/family/${familyId}/source/sms`),
 
     goals: (familyId: string) => request<Goal[]>('GET', `/goals/${familyId}`),
     addGoal: (input: { familyId: string; title: string; targetAmount: number; deadline?: string }) =>

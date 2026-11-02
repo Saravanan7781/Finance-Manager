@@ -6,6 +6,8 @@ const { transactionValidation, transactionUpdateValidation } = require('../middl
 
 router.post('/', requireAuth, transactionValidation, transactionController.addTransaction);
 router.post('/batch', requireAuth, transactionController.addBatchTransactions);
+router.post('/batch-delete', requireAuth, transactionController.deleteBatchTransactions);
+router.delete('/family/:familyId/source/sms', requireAuth, transactionController.deleteAllSmsTransactions);
 router.get('/:familyId/summary', requireAuth, transactionController.getSummary);
 router.get('/:familyId/trend', requireAuth, transactionController.getTrend);
 router.get('/:familyId', requireAuth, transactionController.getTransactions);

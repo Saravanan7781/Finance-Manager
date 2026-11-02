@@ -275,6 +275,49 @@ test('transactions: batch import adds multiple transactions and skips existing d
     assert.equal(batchRes.body.ids.length, 2);
 });
 
+test('transactions: batch-delete reverts imported batch and updates balance', async () => {
+    const { owner, familyId } = await setup();
+    const batchRes = await call('POST', '/api/transactions/batch', {
+        as: owner,
+        body: {
+            familyId,
+            items: [
+                { amount: 200, type: 'expense', category: 'Food', description: 'Swiggy', dedupeKey: 'UNDO-1' },
+                { amount: 1000, type: 'income', category: 'Salary', description: 'Bonus', dedupeKey: 'UNDO-2' },
+            ],
+        },
+    });
+
+    assert.equal(batchRes.status, 201);
+    assert.equal(batchRes.body.ids.length, 2);
+
+    const deleteRes = await call('POST', '/api/transactions/batch-delete', {
+        as: owner,
+        body: { familyId, ids: batchRes.body.ids },
+    });
+
+    assert.equal(deleteRes.status, 200);
+    assert.equal(deleteRes.body.deleted, 2);
+
+    const listRes = await call('GET', `/api/transactions/${familyId}`, { as: owner });
+    assert.equal(listRes.body.length, 0);
+});
+
+test('transactions: delete all SMS transactions removes all source=sms entries', async () => {
+    const { owner, familyId } = await setup();
+    await addTx(owner, familyId, { amount: 150, source: 'manual', description: 'Manual entry' });
+    await addTx(owner, familyId, { amount: 250, source: 'sms', description: 'SMS entry 1' });
+    await addTx(owner, familyId, { amount: 350, source: 'sms', description: 'SMS entry 2' });
+
+    const deleteSmsRes = await call('DELETE', `/api/transactions/family/${familyId}/source/sms`, { as: owner });
+    assert.equal(deleteSmsRes.status, 200);
+    assert.equal(deleteSmsRes.body.deleted, 2);
+
+    const listRes = await call('GET', `/api/transactions/${familyId}`, { as: owner });
+    assert.equal(listRes.body.length, 1);
+    assert.equal(listRes.body[0].description, 'Manual entry');
+});
+
 test('summary totals, category shares and month comparison', async () => {
     const { owner, member, familyId } = await setup();
 
