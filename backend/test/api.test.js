@@ -351,6 +351,80 @@ test('summary: salary with countForNextMonth is added to next month received', a
     assert.equal(novList.body.length, 1);
     assert.equal(novList.body[0].amount, 50000);
     assert.equal(novList.body[0].countForNextMonth, true);
+
+    // Edit transaction: toggle countForNextMonth to false
+    const txId = novList.body[0].id;
+    const editRes = await call('PUT', `/api/transactions/${txId}`, {
+        as: owner,
+        body: { countForNextMonth: false },
+    });
+    assert.equal(editRes.status, 200);
+
+    // Now October summary SHOULD have the 50,000 income, and November should NOT
+    const octResAfter = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10`, { as: owner });
+    assert.equal(octResAfter.body.income, 50000);
+    const novResAfter = await call('GET', `/api/transactions/${familyId}/summary?month=2026-11`, { as: owner });
+    assert.equal(novResAfter.body.income, 0);
+
+    // In monthly lists: October list now has it, November list does not
+    const octListAfter = await call('GET', `/api/transactions/${familyId}?month=2026-10`, { as: owner });
+    assert.equal(octListAfter.body.length, 1);
+    const novListAfter = await call('GET', `/api/transactions/${familyId}?month=2026-11`, { as: owner });
+    assert.equal(novListAfter.body.length, 0);
+
+    // Toggle it back to countForNextMonth: true
+    await call('PUT', `/api/transactions/${txId}`, {
+        as: owner,
+        body: { countForNextMonth: true },
+    });
+    const novResRestored = await call('GET', `/api/transactions/${familyId}/summary?month=2026-11`, { as: owner });
+    assert.equal(novResRestored.body.income, 50000);
+});
+
+test('batch transactions: batch import supports countForNextMonth', async () => {
+    const { owner, familyId } = await setup();
+
+    const batchRes = await call('POST', '/api/transactions/batch', {
+        as: owner,
+        body: {
+            familyId,
+            items: [
+                {
+                    amount: 350,
+                    type: 'expense',
+                    category: 'Food',
+                    description: 'Swiggy',
+                    date: '2026-10-25T12:00:00.000Z',
+                },
+                {
+                    amount: 80000,
+                    type: 'income',
+                    category: 'Salary',
+                    description: 'Tech Corp Salary',
+                    date: '2026-10-31T15:00:00.000Z',
+                    countForNextMonth: true,
+                },
+            ],
+        },
+    });
+    assert.equal(batchRes.status, 201);
+    assert.equal(batchRes.body.added, 2);
+
+    // November summary must reflect the 80,000 received income
+    const novSum = await call('GET', `/api/transactions/${familyId}/summary?month=2026-11`, { as: owner });
+    assert.equal(novSum.body.income, 80000);
+
+    // October summary should only reflect the expense, not the salary
+    const octSum = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10`, { as: owner });
+    assert.equal(octSum.body.income, 0);
+    assert.equal(octSum.body.expense, 350);
+
+    // November transactions list must include the Salary
+    const novList = await call('GET', `/api/transactions/${familyId}?month=2026-11`, { as: owner });
+    assert.equal(novList.body.length, 1);
+    assert.equal(novList.body[0].category, 'Salary');
+    assert.equal(novList.body[0].amount, 80000);
+    assert.equal(novList.body[0].countForNextMonth, true);
 });
 
 test('summary totals, category shares and month comparison', async () => {

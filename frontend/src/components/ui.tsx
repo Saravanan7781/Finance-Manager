@@ -595,6 +595,7 @@ export function Sheet({
                         keyboardShouldPersistTaps="handled"
                         contentContainerStyle={{ paddingBottom: space.xl }}
                         bounces={false}
+                        nestedScrollEnabled
                     >
                         {children}
                     </ScrollView>
@@ -710,6 +711,7 @@ const styles = StyleSheet.create({
         borderTopRightRadius: radius.xl,
         paddingHorizontal: space.xl,
         paddingTop: space.md,
+        flexShrink: 1,
     },
     sheetHandle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: colors.hairline, marginBottom: space.lg },
     sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.md, marginTop: space.xl },
