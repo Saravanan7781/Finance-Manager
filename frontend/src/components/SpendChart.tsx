@@ -11,6 +11,7 @@ const RANGES: { value: TrendRange; label: string; period: string; unit: string }
     { value: 'day', label: 'Days', period: 'Last 7 days', unit: 'DAY' },
     { value: 'week', label: 'Weeks', period: 'Last 8 weeks', unit: 'WEEK' },
     { value: 'month', label: 'Months', period: 'Last 6 months', unit: 'MONTH' },
+    { value: 'year', label: 'Years', period: 'Last 12 months', unit: 'YEAR' },
 ];
 
 function Bar({ ratio, index, tone }: { ratio: number; index: number; tone: 'selected' | 'current' | 'peak' | 'plain' }) {

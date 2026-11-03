@@ -13,14 +13,16 @@ import { api } from '@/lib/api';
 import { categoriesFor, getCategory } from '@/lib/categories';
 import { dayLabel, money, moneyShort, monthBounds, monthKey, monthLabel, shiftMonth, tzOffset } from '@/lib/format';
 import type { Tx, TxType, TrendRange } from '@/lib/types';
+import { useTranslation } from '@/lib/i18n';
 
 const PAGE = 30;
 // A month or a category is a bounded slice of history, so load it in one go instead of paging.
 const WHOLE = 200;
 
-const PIE_LABEL: Record<TrendRange, string> = { day: '7 DAYS', week: '8 WEEKS', month: '6 MONTHS' };
+const PIE_LABEL: Record<TrendRange, string> = { day: 'TODAY', week: '1 WEEK', month: 'CURRENT MONTH', year: 'THAT YEAR' };
 
 export default function Activity() {
+    const { t, translateCategory } = useTranslation();
     const familyId = useFamilyId();
     // Insights sends the category and month of the bubble you tapped; `at` makes repeat taps count as new.
     const params = useLocalSearchParams<{ category?: string; month?: string; scope?: string; at?: string }>();
@@ -74,7 +76,7 @@ export default function Activity() {
         () => api.transactions(familyId, queryOpts),
         [familyId, type, serverCategory, mine, month, debouncedSearch]
     );
-    const pie = useAsync(() => api.trend(familyId, pieRange, tzOffset()), [familyId, pieRange]);
+    const pie = useAsync(() => api.trend(familyId, pieRange, tzOffset(), 'family', true), [familyId, pieRange]);
     const family = useAsync(() => api.family(familyId), [familyId]);
 
     // A fresh first page, or a different filter, invalidates whatever was paged in after it.
@@ -165,7 +167,7 @@ export default function Activity() {
     return (
         <Screen bottomInset={96} refreshing={refreshing} onRefresh={pullToRefresh}>
             <View style={styles.header}>
-                <T variant="title" style={{ flex: 1 }}>Transactions</T>
+                <T variant="title" style={{ flex: 1 }}>{t('tab_activity')}</T>
                 <IconButton
                     Icon={searching ? X : Search}
                     label={searching ? 'Close search' : 'Search transactions'}
@@ -183,7 +185,7 @@ export default function Activity() {
                         accessibilityLabel="Search transactions"
                         value={query}
                         onChangeText={setQuery}
-                        placeholder="Search note, category, person"
+                        placeholder={t('search_hint')}
                         placeholderTextColor={colors.faint}
                         autoFocus
                         returnKeyType="search"
@@ -193,7 +195,7 @@ export default function Activity() {
             ) : null}
 
             <Glass strong>
-                <T variant="heading">Spending by category</T>
+                <T variant="heading">{t('spending_by_category')}</T>
                 <View style={{ marginTop: space.md }}>
                     <RangeToggle value={pieRange} onChange={setPieRange} />
                 </View>
@@ -208,7 +210,7 @@ export default function Activity() {
                         </>
                     ) : (
                         <>
-                            <DonutChart key={pieRange} slices={slices} total={pieTotal} label={PIE_LABEL[pieRange]} selected={category} onSelect={pickFromPie} />
+                            <DonutChart key={pieRange} slices={slices} total={pieTotal} label={{ day: t('range_today'), week: t('range_1week'), month: t('range_current_month'), year: t('range_that_year') }[pieRange]} selected={category} onSelect={pickFromPie} />
                             <View style={styles.legend}>
                                 {slices.length === 0 ? (
                                     <T variant="small" color={colors.muted}>Nothing spent in this period.</T>

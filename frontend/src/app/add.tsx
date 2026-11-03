@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { Calendar, MessageSquare, Plus, Sparkles, Trash2 } from 'lucide-react-native';
+import { Calendar, MessageSquare, Plus, Sparkles, Trash2, Users } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, Switch, TextInput, View } from 'react-native';
 import { DatePickerSheet } from '@/components/DatePickerSheet';
@@ -15,9 +15,11 @@ import { confirmAction } from '@/lib/dialog';
 import { CURRENCY } from '@/lib/config';
 import { formatAmountInput, fromDateInput, parseAmountInput, toDateInput } from '@/lib/format';
 import { parseBankSms } from '@/lib/sms';
+import { useTranslation } from '@/lib/i18n';
 import type { CustomCategory, TxType } from '@/lib/types';
 
 export default function AddTransaction() {
+    const { t, translateCategory } = useTranslation();
     const params = useLocalSearchParams<{
         type?: string;
         id?: string;
@@ -27,6 +29,9 @@ export default function AddTransaction() {
         paymentMethod?: string;
         date?: string;
         countForNextMonth?: string;
+        isSplit?: string;
+        myShare?: string;
+        splitWith?: string;
     }>();
     const familyId = useFamilyId();
     const editing = params.id;
@@ -50,6 +55,9 @@ export default function AddTransaction() {
     const [countForNextMonth, setCountForNextMonth] = useState(
         params.countForNextMonth === '1' || params.countForNextMonth === 'true'
     );
+    const [isSplit, setIsSplit] = useState(params.isSplit === '1' || params.isSplit === 'true');
+    const [myShare, setMyShare] = useState(params.myShare ? formatAmountInput(String(params.myShare)) : '');
+    const [splitWith, setSplitWith] = useState(params.splitWith ?? '');
 
     // Fetch custom categories
     useEffect(() => {
@@ -100,7 +108,10 @@ export default function AddTransaction() {
         if (params.description !== undefined) setDescription(params.description);
         if (params.paymentMethod !== undefined) setMethod(params.paymentMethod || null);
         if (params.date) setDateText(toDateInput(new Date(params.date)));
-    }, [params.id, params.type, params.amount, params.category, params.description, params.paymentMethod, params.date]);
+        if (params.isSplit !== undefined) setIsSplit(params.isSplit === '1' || params.isSplit === 'true');
+        if (params.myShare) setMyShare(formatAmountInput(String(params.myShare)));
+        if (params.splitWith !== undefined) setSplitWith(params.splitWith);
+    }, [params.id, params.type, params.amount, params.category, params.description, params.paymentMethod, params.date, params.isSplit, params.myShare, params.splitWith]);
 
     // Fallback: If editing and details were not passed via params, fetch from recent transactions
     useEffect(() => {
@@ -118,6 +129,11 @@ export default function AddTransaction() {
                 if (tx.countForNextMonth !== undefined) {
                     setCountForNextMonth(Boolean(tx.countForNextMonth));
                 }
+                if (tx.isSplit !== undefined) {
+                    setIsSplit(Boolean(tx.isSplit));
+                    if (tx.myShare != null) setMyShare(formatAmountInput(String(tx.myShare)));
+                    if (tx.splitWith) setSplitWith(tx.splitWith);
+                }
             })
             .catch((e) => setError((e as Error).message));
     }, [editing, familyId, params.amount]);
@@ -125,6 +141,7 @@ export default function AddTransaction() {
     const changeType = (next: TxType) => {
         setType(next);
         if (!categoriesFor(next, customCategories).some((c) => c.name === category)) setCategory('');
+        if (next === 'income') setIsSplit(false);
     };
 
     const save = async (keepOpen = false) => {
@@ -133,6 +150,20 @@ export default function AddTransaction() {
         if (!(value > 0)) return setError('Enter an amount greater than zero.');
         if (!category) return setError('Pick a category.');
         if (!parsedDate) return setError('Use the date format YYYY-MM-DD, for example 2026-10-29.');
+
+        const splitActive = type === 'expense' && isSplit;
+        let parsedMyShare: number | null = null;
+        let lentAmount: number | null = null;
+        if (splitActive) {
+            parsedMyShare = parseAmountInput(myShare);
+            if (!(parsedMyShare > 0)) {
+                return setError('Enter your valid share of the expense (greater than 0).');
+            }
+            if (parsedMyShare >= value) {
+                return setError('Your share must be less than the total expense amount.');
+            }
+            lentAmount = parseFloat((value - parsedMyShare).toFixed(2));
+        }
 
         const now = new Date();
         let finalDate = parsedDate;
@@ -168,6 +199,10 @@ export default function AddTransaction() {
                     paymentMethod: method,
                     date: finalDate.toISOString(),
                     countForNextMonth: flagCountNext,
+                    isSplit: splitActive,
+                    myShare: splitActive ? parsedMyShare : null,
+                    lentAmount: splitActive ? lentAmount : null,
+                    splitWith: splitActive && splitWith.trim() ? splitWith.trim() : null,
                 });
                 router.back();
             } else {
@@ -182,13 +217,36 @@ export default function AddTransaction() {
                     source,
                     dedupeKey,
                     countForNextMonth: flagCountNext,
+                    isSplit: splitActive,
+                    myShare: splitActive ? parsedMyShare : null,
+                    lentAmount: splitActive ? lentAmount : null,
+                    splitWith: splitActive && splitWith.trim() ? splitWith.trim() : null,
                 });
+
+                if (splitActive && lentAmount && lentAmount > 0) {
+                    try {
+                        await api.addLoan({
+                            familyId,
+                            direction: 'lent',
+                            person: splitWith.trim() || 'Friends',
+                            amount: lentAmount,
+                            note: `Split: ${description.trim() || category} (Total ${CURRENCY}${value.toFixed(2)})`,
+                            recordTransaction: false,
+                        });
+                    } catch (e) {
+                        console.warn('Auto-lent error:', e);
+                    }
+                }
+
                 if (keepOpen) {
                     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
                     setAmount('');
                     setDescription('');
                     setDedupeKey(null);
                     setSource('manual');
+                    setIsSplit(false);
+                    setMyShare('');
+                    setSplitWith('');
                     setSuccess(`Added ${category} (${CURRENCY}${value.toFixed(2)})`);
                     setTimeout(() => setSuccess(null), 3500);
                 } else {
@@ -218,23 +276,23 @@ export default function AddTransaction() {
         <Screen keyboard>
             <Header
                 close
-                title={editing ? 'Edit transaction' : 'New transaction'}
-                right={editing ? <IconButton Icon={Trash2} label="Delete transaction" onPress={remove} /> : undefined}
+                title={editing ? t('edit_transaction') : t('new_transaction')}
+                right={editing ? <IconButton Icon={Trash2} label={t('delete')} onPress={remove} /> : undefined}
             />
 
             <Segmented
                 value={type}
                 onChange={changeType}
                 options={[
-                    { value: 'expense', label: 'Spent' },
-                    { value: 'income', label: 'Received' },
+                    { value: 'expense', label: t('spent') },
+                    { value: 'income', label: t('received') },
                 ]}
             />
 
             {!editing && (
                 <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: space.md, flexWrap: 'wrap' }}>
                     <PillButton
-                        label="Paste SMS alert"
+                        label={t('paste_sms')}
                         Icon={Sparkles}
                         variant="glass"
                         onPress={pasteFromSms}
@@ -242,7 +300,7 @@ export default function AddTransaction() {
                     />
                     {(Platform.OS === 'android' || __DEV__) && (
                         <PillButton
-                            label="Extract from SMS"
+                            label={t('extract_from_sms')}
                             Icon={MessageSquare}
                             variant="glass"
                             onPress={() => router.push('/sms-import')}
@@ -271,10 +329,10 @@ export default function AddTransaction() {
             <SuccessBanner message={success} />
             <ErrorBanner message={error} />
 
-            <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>CATEGORY</T>
+            <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>{t('category')}</T>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: space.lg }}>
                 {categoriesFor(type, customCategories).map((c) => (
-                    <Chip key={c.name} label={c.name} Icon={c.Icon} active={category === c.name} onPress={() => {
+                    <Chip key={c.name} label={translateCategory(c.name)} Icon={c.Icon} active={category === c.name} onPress={() => {
                         setCategory(c.name);
                         if (c.name === 'Salary') {
                             const parsedD = fromDateInput(dateText);
@@ -285,10 +343,10 @@ export default function AddTransaction() {
             </View>
 
             <Glass strong style={{ gap: space.lg }}>
-                <Field label="Note" value={description} onChangeText={setDescription} placeholder={type === 'income' ? 'Where did it come from?' : 'What was it for?'} maxLength={500} />
+                <Field label={t('note')} value={description} onChangeText={setDescription} placeholder={type === 'income' ? 'Where did it come from?' : 'What was it for?'} maxLength={500} />
 
                 <View>
-                    <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>PAID VIA</T>
+                    <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>{t('paid_via')}</T>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                         {PAYMENT_METHODS.map((m) => (
                             <Chip key={m} label={m} active={method === m} onPress={() => setMethod(method === m ? null : m)} />
@@ -298,7 +356,7 @@ export default function AddTransaction() {
 
                 <View>
                     <Field
-                        label="Date"
+                        label={t('date')}
                         value={dateText}
                         onChangeText={setDateText}
                         placeholder="YYYY-MM-DD"
@@ -325,24 +383,86 @@ export default function AddTransaction() {
                     />
                     <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                         <Chip
-                            label="Today"
+                            label={t('today')}
                             active={dateText === toDateInput(new Date())}
                             onPress={() => setDateText(toDateInput(new Date()))}
                         />
                         <Chip
-                            label="Yesterday"
+                            label={t('yesterday')}
                             active={dateText === toDateInput(new Date(Date.now() - 86400000))}
                             onPress={() => setDateText(toDateInput(new Date(Date.now() - 86400000)))}
                         />
                     </View>
                 </View>
 
+                {type === 'expense' && (
+                    <View style={{ gap: space.md, paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.mint2 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <View style={{ flex: 1, paddingRight: space.md }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <Users size={16} color={colors.ink} />
+                                    <T variant="heading" style={{ fontSize: 15 }}>{t('split_expense')}</T>
+                                </View>
+                                <T variant="tiny" color={colors.inkSoft} style={{ marginTop: 2 }}>
+                                    {t('split_expense_desc')}
+                                </T>
+                            </View>
+                            <Switch
+                                value={isSplit}
+                                onValueChange={(v) => {
+                                    setIsSplit(v);
+                                    if (v && !myShare && amount) {
+                                        const total = parseAmountInput(amount);
+                                        if (total > 0) {
+                                            setMyShare(formatAmountInput((total / 2).toFixed(2)));
+                                        }
+                                    }
+                                }}
+                                trackColor={{ false: colors.mint2, true: colors.ink }}
+                                thumbColor={Platform.OS === 'android' ? colors.white : undefined}
+                            />
+                        </View>
+
+                        {isSplit && (
+                            <View style={{ gap: space.md, backgroundColor: colors.mint1, padding: space.md, borderRadius: radius.md }}>
+                                <Field
+                                    label={t('my_share')}
+                                    value={myShare}
+                                    onChangeText={(t) => setMyShare((prev) => formatAmountInput(t, prev))}
+                                    placeholder="0"
+                                    keyboardType="decimal-pad"
+                                />
+                                <Field
+                                    label={t('split_with')}
+                                    value={splitWith}
+                                    onChangeText={setSplitWith}
+                                    placeholder="e.g. Rahul, Friends"
+                                    maxLength={80}
+                                />
+                                {(() => {
+                                    const total = parseAmountInput(amount);
+                                    const mine = parseAmountInput(myShare);
+                                    const lent = Math.max(0, total - mine);
+                                    return (
+                                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 4, paddingTop: 2 }}>
+                                            <T variant="tiny" color={colors.muted}>{t('friends_owe')}</T>
+                                            <T variant="small" color={colors.ink} style={{ fontFamily: fonts.bold }}>
+                                                {CURRENCY}{lent.toFixed(2)}
+                                            </T>
+                                        </View>
+                                    );
+                                })()}
+                            </View>
+                        )}
+                    </View>
+                )}
+
                 {(category === 'Salary' || type === 'income') && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
                         <View style={{ flex: 1, paddingRight: space.md }}>
-                            <T variant="heading" style={{ fontSize: 15 }}>Count as next month</T>
+                            <T variant="heading" style={{ fontSize: 15 }}>{t('count_as_next_month')}</T>
                             <T variant="tiny" color={colors.inkSoft}>
-                                Count this salary towards next month's received income while keeping the original date
+                                {t('count_as_next_month_desc')}
                             </T>
                         </View>
                         <Switch
@@ -357,7 +477,7 @@ export default function AddTransaction() {
 
             <View style={{ marginTop: space.xl, gap: 10 }}>
                 <PillButton
-                    label={editing ? 'Save changes' : 'Add transaction'}
+                    label={editing ? t('save_changes') : t('add_transaction')}
                     onPress={() => save(false)}
                     loading={busy && !addAnother}
                 />

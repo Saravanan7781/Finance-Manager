@@ -154,15 +154,16 @@ const bucketDate = (localStart: string) => {
 const dayMonth = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}`;
 
 // Short label under a chart bar.
-export const bucketLabel = (range: 'day' | 'week' | 'month', localStart: string, isLast: boolean) => {
+export const bucketLabel = (range: 'day' | 'week' | 'month' | 'year', localStart: string, isLast: boolean) => {
     const d = bucketDate(localStart);
     if (range === 'day') return isLast ? 'Today' : WEEKDAYS_SHORT[d.getDay()];
     if (range === 'week') return isLast ? 'This wk' : dayMonth(d);
+    if (range === 'year') return d.getFullYear().toString();
     return MONTHS[d.getMonth()].slice(0, 3);
 };
 
 // Heading shown above the transactions of a selected bar.
-export const bucketTitle = (range: 'day' | 'week' | 'month', localStart: string) => {
+export const bucketTitle = (range: 'day' | 'week' | 'month' | 'year', localStart: string) => {
     const d = bucketDate(localStart);
     if (range === 'day') {
         const diff = daysUntil(d.toISOString());
@@ -174,6 +175,9 @@ export const bucketTitle = (range: 'day' | 'week' | 'month', localStart: string)
         const end = new Date(d);
         end.setDate(d.getDate() + 6);
         return `${dayMonth(d)} – ${dayMonth(end)}`;
+    }
+    if (range === 'year') {
+        return `Year ${d.getFullYear()}`;
     }
     return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 };

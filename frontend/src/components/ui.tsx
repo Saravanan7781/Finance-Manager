@@ -1,3 +1,4 @@
+import Svg, { Circle } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import type { LucideIcon } from 'lucide-react-native';
@@ -531,10 +532,132 @@ export function Empty({ title, hint, Icon }: { title: string; hint?: string; Ico
     );
 }
 
-export function Loading({ dark = false }: { dark?: boolean }) {
+export function Loading({ dark = false, hint }: { dark?: boolean; hint?: string }) {
+    const rotate = useRef(new Animated.Value(0)).current;
+    const pulse = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        const spinAnim = Animated.loop(
+            Animated.timing(rotate, {
+                toValue: 1,
+                duration: 1200,
+                easing: Easing.linear,
+                useNativeDriver: true,
+            })
+        );
+        const pulseAnim = Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulse, {
+                    toValue: 1,
+                    duration: 850,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(pulse, {
+                    toValue: 0,
+                    duration: 850,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+
+        spinAnim.start();
+        pulseAnim.start();
+
+        return () => {
+            spinAnim.stop();
+            pulseAnim.stop();
+        };
+    }, [rotate, pulse]);
+
+    const spin = rotate.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0deg', '360deg'],
+    });
+
+    const scale = pulse.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.9, 1.1],
+    });
+
+    const glowOpacity = pulse.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.35, 0.75],
+    });
+
+    const ringColor = dark ? colors.white : colors.ink;
+    const accentColor = colors.lemon;
+
     return (
-        <View style={styles.empty}>
-            <ActivityIndicator color={dark ? colors.white : colors.ink} />
+        <View style={styles.loadingContainer}>
+            <View style={{ width: 84, height: 84, alignItems: 'center', justifyContent: 'center' }}>
+                {/* Outer breathing aura */}
+                <Animated.View
+                    style={[
+                        styles.loadingGlow,
+                        {
+                            opacity: glowOpacity,
+                            transform: [{ scale }],
+                            backgroundColor: dark ? 'rgba(255,255,255,0.1)' : 'rgba(247, 242, 107, 0.45)',
+                        },
+                    ]}
+                />
+
+                {/* Rotating dual-orbital arcs */}
+                <Animated.View style={{ transform: [{ rotate: spin }] }}>
+                    <Svg width={72} height={72} viewBox="0 0 72 72">
+                        <Circle
+                            cx={36}
+                            cy={36}
+                            r={30}
+                            stroke={dark ? 'rgba(255,255,255,0.18)' : 'rgba(14,16,15,0.1)'}
+                            strokeWidth={3.5}
+                            fill="none"
+                        />
+                        <Circle
+                            cx={36}
+                            cy={36}
+                            r={30}
+                            stroke={ringColor}
+                            strokeWidth={4}
+                            strokeLinecap="round"
+                            strokeDasharray="45 145"
+                            fill="none"
+                        />
+                        <Circle
+                            cx={36}
+                            cy={36}
+                            r={30}
+                            stroke={accentColor}
+                            strokeWidth={4}
+                            strokeLinecap="round"
+                            strokeDasharray="25 165"
+                            strokeDashoffset={-95}
+                            fill="none"
+                        />
+                    </Svg>
+                </Animated.View>
+
+                {/* Center breathing gem */}
+                <Animated.View
+                    style={[
+                        styles.loadingCore,
+                        {
+                            transform: [{ scale }],
+                            backgroundColor: dark ? colors.white : colors.ink,
+                        },
+                    ]}
+                >
+                    <View style={[styles.loadingCoreDot, { backgroundColor: accentColor }]} />
+                </Animated.View>
+            </View>
+
+            {hint ? (
+                <T variant="small" color={dark ? colors.faint : colors.muted} style={{ marginTop: space.md, textAlign: 'center' }}>
+                    {hint}
+                </T>
+            ) : null}
         </View>
     );
 }
@@ -591,6 +714,7 @@ export function Sheet({
                         {title}
                     </T>
                     <ScrollView
+                        style={{ flexShrink: 1 }}
                         showsVerticalScrollIndicator={true}
                         keyboardShouldPersistTaps="handled"
                         contentContainerStyle={{ paddingBottom: space.xl }}
@@ -703,6 +827,33 @@ const styles = StyleSheet.create({
         marginBottom: space.md,
     },
     empty: { alignItems: 'center', justifyContent: 'center', paddingVertical: space.xxl * 1.5, paddingHorizontal: space.xl },
+    loadingContainer: {
+        flex: 1,
+        minHeight: 280,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: space.xxl,
+    },
+    loadingGlow: {
+        position: 'absolute',
+        width: 78,
+        height: 78,
+        borderRadius: 39,
+    },
+    loadingCore: {
+        position: 'absolute',
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...shadow.card,
+    },
+    loadingCoreDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+    },
     sheetRoot: { flex: 1, justifyContent: 'flex-end' },
     sheetBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(5,12,10,0.45)' },
     sheet: {

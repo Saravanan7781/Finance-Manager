@@ -56,6 +56,10 @@ exports.addTransaction = async (req, res, next) => {
             source: source || 'manual',
             dedupeKey: dedupeKey || null,
             countForNextMonth: Boolean(req.body.countForNextMonth),
+            isSplit: Boolean(req.body.isSplit),
+            myShare: req.body.myShare !== undefined && req.body.myShare !== null ? round2(parseFloat(req.body.myShare)) : null,
+            lentAmount: req.body.lentAmount !== undefined && req.body.lentAmount !== null ? round2(parseFloat(req.body.lentAmount)) : null,
+            splitWith: req.body.splitWith ? String(req.body.splitWith).trim() : null,
             keywords,
             date: txDate,
             createdAt: new Date(),
@@ -143,6 +147,10 @@ exports.addBatchTransactions = async (req, res, next) => {
                 source: item.source || 'sms',
                 dedupeKey: item.dedupeKey || null,
                 countForNextMonth: Boolean(item.countForNextMonth),
+                isSplit: Boolean(item.isSplit),
+                myShare: item.myShare !== undefined && item.myShare !== null ? round2(parseFloat(item.myShare)) : null,
+                lentAmount: item.lentAmount !== undefined && item.lentAmount !== null ? round2(parseFloat(item.lentAmount)) : null,
+                splitWith: item.splitWith ? String(item.splitWith).trim() : null,
                 keywords,
                 date: txDate,
                 createdAt: new Date(),
@@ -350,6 +358,10 @@ exports.updateTransaction = async (req, res, next) => {
         if (req.body.countForNextMonth !== undefined) {
             updates.countForNextMonth = Boolean(req.body.countForNextMonth);
         }
+        if (req.body.isSplit !== undefined) updates.isSplit = Boolean(req.body.isSplit);
+        if (req.body.myShare !== undefined) updates.myShare = req.body.myShare !== null ? round2(parseFloat(req.body.myShare)) : null;
+        if (req.body.lentAmount !== undefined) updates.lentAmount = req.body.lentAmount !== null ? round2(parseFloat(req.body.lentAmount)) : null;
+        if (req.body.splitWith !== undefined) updates.splitWith = req.body.splitWith ? String(req.body.splitWith).trim() : null;
 
         if (Object.keys(updates).length === 0) throw new HttpError(400, 'Nothing to update');
         updates.updatedAt = new Date();
@@ -413,29 +425,43 @@ const previousMonth = (month) => {
 };
 
 const DAY_MS = 86400000;
-const TREND_BUCKETS = { day: 7, week: 8, month: 6 };
+const TREND_BUCKETS = { day: 7, week: 8, month: 6, year: 12 };
 
 // Local calendar buckets for the trend chart, as "local midnight" values expressed in UTC milliseconds.
-// Days are the last 7 days ending today, weeks run Monday to Sunday (the last 8, the newest still in
-// progress), and months are the last 6 calendar months including this one.
-const trendBounds = (range, localNow) => {
+// Supports single window mode (for the Donut Chart in Transactions) or historical multi-bucket mode.
+const trendBounds = (range, localNow, single = false) => {
     const todayLocal = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate());
-    const count = TREND_BUCKETS[range];
     const starts = [];
 
-    if (range === 'day') {
-        for (let i = count - 1; i >= 0; i--) starts.push(todayLocal - i * DAY_MS);
-    } else if (range === 'week') {
-        const thisMonday = todayLocal - ((localNow.getUTCDay() + 6) % 7) * DAY_MS;
-        for (let i = count - 1; i >= 0; i--) starts.push(thisMonday - i * 7 * DAY_MS);
+    if (single) {
+        if (range === 'day') {
+            starts.push(todayLocal);
+        } else if (range === 'week') {
+            for (let i = 6; i >= 0; i--) starts.push(todayLocal - i * DAY_MS);
+        } else if (range === 'year') {
+            for (let i = 0; i < 12; i++) starts.push(Date.UTC(localNow.getUTCFullYear(), i, 1));
+        } else {
+            // month: current month
+            starts.push(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), 1));
+        }
     } else {
-        for (let i = count - 1; i >= 0; i--) {
-            starts.push(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth() - i, 1));
+        const count = TREND_BUCKETS[range] || 7;
+        if (range === 'day') {
+            for (let i = count - 1; i >= 0; i--) starts.push(todayLocal - i * DAY_MS);
+        } else if (range === 'week') {
+            const thisMonday = todayLocal - ((localNow.getUTCDay() + 6) % 7) * DAY_MS;
+            for (let i = count - 1; i >= 0; i--) starts.push(thisMonday - i * 7 * DAY_MS);
+        } else if (range === 'year') {
+            for (let i = 0; i < 12; i++) starts.push(Date.UTC(localNow.getUTCFullYear(), i, 1));
+        } else {
+            for (let i = count - 1; i >= 0; i--) {
+                starts.push(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth() - i, 1));
+            }
         }
     }
 
     const endOf = (start) => {
-        if (range === 'day') return start + DAY_MS;
+        if (range === 'day' || (single && range === 'week')) return start + DAY_MS;
         if (range === 'week') return start + 7 * DAY_MS;
         const d = new Date(start);
         return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
@@ -447,13 +473,14 @@ const trendBounds = (range, localNow) => {
 exports.getTrend = async (req, res, next) => {
     try {
         const { familyId } = req.params;
+        const single = req.query.single === '1' || req.query.single === 'true';
         const range = TREND_BUCKETS[req.query.range] ? req.query.range : 'day';
         const tzOffset = parseInt(req.query.tzOffset, 10) || 0;
         const scope = req.query.scope === 'me' ? 'me' : 'family';
 
         await getFamilyForMember(familyId, req.user.uid);
 
-        const bounds = trendBounds(range, new Date(Date.now() + tzOffset * 60000));
+        const bounds = trendBounds(range, new Date(Date.now() + tzOffset * 60000), single);
         const shift = tzOffset * 60000;
         const buckets = bounds.map((b) => ({
             localStart: new Date(b.start).toISOString().slice(0, 10),

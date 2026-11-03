@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SpendChart, SpendChartSkeleton } from '@/components/SpendChart';
 import { TxRow, TxRowSkeleton } from '@/components/TxRow';
+import { LanguageToggle } from '@/components/LanguageSelector';
 import { Amount, Avatar, Empty, ErrorBanner, Glass, IconButton, Progress, Reveal, Screen, SectionHeader, Skeleton, T } from '@/components/ui';
 import { colors, fonts, radius, shadow, space } from '@/constants/theme';
 import { useAuth, useFamilyId } from '@/context/auth';
@@ -73,6 +74,7 @@ export default function Home() {
                     <T variant="small" color={colors.inkSoft}>{me?.family?.name}</T>
                     <T variant="heading" style={{ fontSize: 20 }}>Hi, {firstName(me?.displayName ?? '')}!</T>
                 </View>
+                <LanguageToggle />
                 <IconButton
                     Icon={Bell}
                     label={totalAlerts ? `${totalAlerts} alerts` : 'Loans and reminders'}

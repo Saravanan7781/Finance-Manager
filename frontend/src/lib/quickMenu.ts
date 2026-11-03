@@ -1,7 +1,7 @@
 // Geometry for the hold-and-slide menu on the + button. Offsets are in pixels from the centre of the
 // button, with y negative going up, so the options fan out left, up and right above the tab bar.
 
-export type QuickKey = 'spend' | 'earn' | 'lend';
+export type QuickKey = 'earn' | 'spend' | 'lend';
 
 export interface QuickOption {
     key: QuickKey;
@@ -13,8 +13,9 @@ export interface QuickOption {
 
 export const OPTIONS: QuickOption[] = [
     // The tab bar reaches about 40px above the button centre, so the side options sit well clear of it.
-    { key: 'spend', label: 'Spend', x: -96, y: -96, href: '/add?type=expense' },
-    { key: 'earn', label: 'Earn', x: 0, y: -148, href: '/add?type=income' },
+    // Swapped spend and earn: Earn is on the left, Spend is at the top, Lend is on the right.
+    { key: 'earn', label: 'Earn', x: -96, y: -96, href: '/add?type=income' },
+    { key: 'spend', label: 'Spend', x: 0, y: -148, href: '/add?type=expense' },
     { key: 'lend', label: 'Lend', x: 96, y: -96, href: '/loans?new=1' },
 ];
 

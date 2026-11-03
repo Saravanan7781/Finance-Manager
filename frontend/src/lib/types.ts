@@ -67,6 +67,10 @@ export interface Tx {
     source: 'manual' | 'sms';
     date: string;
     countForNextMonth?: boolean;
+    isSplit?: boolean;
+    myShare?: number | null;
+    lentAmount?: number | null;
+    splitWith?: string | null;
     createdAt: string;
 }
 
@@ -81,6 +85,10 @@ export interface TxInput {
     source?: 'manual' | 'sms';
     dedupeKey?: string | null;
     countForNextMonth?: boolean;
+    isSplit?: boolean;
+    myShare?: number | null;
+    lentAmount?: number | null;
+    splitWith?: string | null;
 }
 
 export interface CategoryShare {
@@ -92,7 +100,7 @@ export interface CategoryShare {
 
 export type SummaryScope = 'family' | 'me';
 
-export type TrendRange = 'day' | 'week' | 'month';
+export type TrendRange = 'day' | 'week' | 'month' | 'year';
 
 // One bar of the spending chart. `start` and `end` are real instants, so they can be passed straight
 // back to the transaction list as `from` and `to` to fetch exactly what the bar adds up.

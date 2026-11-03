@@ -46,6 +46,10 @@ const transactionValidation = [
     body('source').optional().isIn(['manual', 'sms']).withMessage('Source must be manual or sms'),
     body('dedupeKey').optional({ values: 'null' }).isString().isLength({ max: 200 }).withMessage('Dedupe key too long'),
     body('countForNextMonth').optional().isBoolean(),
+    body('isSplit').optional().isBoolean(),
+    body('myShare').optional({ values: 'null' }).isFloat({ min: 0 }),
+    body('lentAmount').optional({ values: 'null' }).isFloat({ min: 0 }),
+    body('splitWith').optional({ values: 'null' }).trim().isLength({ max: 100 }),
     handleValidationErrors,
 ];
 
@@ -57,6 +61,11 @@ const transactionUpdateValidation = [
     body('description').optional().trim().isLength({ max: 500 }).withMessage('Description too long'),
     body('date').optional().isISO8601().withMessage('Invalid date format'),
     body('paymentMethod').optional({ values: 'null' }).trim().isLength({ max: 30 }).withMessage('Payment method too long'),
+    body('countForNextMonth').optional().isBoolean(),
+    body('isSplit').optional().isBoolean(),
+    body('myShare').optional({ values: 'null' }).isFloat({ min: 0 }),
+    body('lentAmount').optional({ values: 'null' }).isFloat({ min: 0 }),
+    body('splitWith').optional({ values: 'null' }).trim().isLength({ max: 100 }),
     handleValidationErrors,
 ];
 

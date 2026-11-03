@@ -1,6 +1,6 @@
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
-import { BellRing, Check, ChevronRight, Copy, Download, HandCoins, LogOut, MessageSquare, Palette, PiggyBank, Plus, RefreshCw, Repeat, Share2, Tag, Target, Trash2, UserCheck, UserMinus, Users } from 'lucide-react-native';
+import { BellRing, Check, ChevronRight, Copy, Download, HandCoins, Languages, LogOut, MessageSquare, Palette, PiggyBank, Plus, RefreshCw, Repeat, Share2, Tag, Target, Trash2, UserCheck, UserMinus, Users } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, Share, StyleSheet, Switch, View } from 'react-native';
 import { Avatar, Chip, ErrorBanner, Field, Glass, IconButton, PillButton, Screen, SectionHeader, Segmented, Sheet, SuccessBanner, T } from '@/components/ui';
@@ -10,6 +10,7 @@ import { useAsync } from '@/hooks/useAsync';
 import { api } from '@/lib/api';
 import { confirmAction } from '@/lib/dialog';
 import { exportTransactionsCsv } from '@/lib/export';
+import { useTranslation } from '@/lib/i18n';
 import { restartApp } from '@/lib/restart';
 import { remindersEnabled, remindersSupported, setRemindersEnabled } from '@/lib/notifications';
 import type { TxType } from '@/lib/types';
@@ -26,6 +27,7 @@ const CATEGORY_TINTS = [
 ];
 
 export default function Family() {
+    const { t, lang, setLanguage } = useTranslation();
     const { me, refresh, signOut } = useAuth();
     const familyId = useFamilyId();
     const isAdmin = me?.family?.admin === me?.uid;
@@ -301,6 +303,7 @@ export default function Family() {
                     />
                 ) : null}
                 <NavRow Icon={Palette} label="Color theme" hint={paletteName} onPress={() => setPicking(true)} />
+                <NavRow Icon={Languages} label={t('language')} hint={lang === 'en' ? 'English' : 'தமிழ் (Tamil)'} onPress={() => setLanguage(lang === 'en' ? 'ta' : 'en')} />
                 {remindersSupported ? (
                     <View style={styles.navRow}>
                         <BellRing size={20} color={colors.ink} />

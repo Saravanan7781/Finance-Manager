@@ -7,6 +7,7 @@ import { AccessibilityInfo, Animated, Easing, PanResponder, Platform, Pressable,
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { colors, fonts, shadow } from '@/constants/theme';
+import { useTranslation, t } from '@/lib/i18n';
 import { DEMO } from '@/lib/config';
 import { HOLD_MS, MOVE_SLOP, OPTIONS, OPTION_SIZE, pickOption, type QuickKey } from '@/lib/quickMenu';
 
@@ -70,7 +71,7 @@ function QuickOptionBubble({ option, progress, hovered }: { option: (typeof OPTI
                 <Icon size={26} color={hovered ? colors.white : colors.ink} strokeWidth={2.3} />
             </Animated.View>
             <View style={[styles.optionLabel, hovered && { backgroundColor: colors.lemon }]}>
-                <Text style={[styles.optionLabelText, hovered && { color: colors.ink }]}>{option.label}</Text>
+                <Text style={[styles.optionLabelText, hovered && { color: colors.ink }]}>{t(('quick_' + option.key) as any)}</Text>
             </View>
         </Animated.View>
     );
@@ -192,6 +193,8 @@ function FabIntro() {
     );
 }
 
+let hasShownOpeningAnimationThisSession = false;
+
 // The yellow + button. A tap opens the normal add screen. Holding fans out Spend (left), Earn (up) and
 // Lend (right); sliding onto one and letting go opens it, and letting go anywhere else cancels.
 function AddButton({ progress, onOpenChange }: { progress: Animated.Value; onOpenChange: (open: boolean) => void }) {
@@ -238,6 +241,28 @@ function AddButton({ progress, onOpenChange }: { progress: Animated.Value; onOpe
             router.push('/add');
         }
     };
+
+    // Demonstrate the 3 functionality animation once after 5s of opening the app
+    useEffect(() => {
+        if (hasShownOpeningAnimationThisSession) return;
+        hasShownOpeningAnimationThisSession = true;
+
+        const autoTimer = setTimeout(() => {
+            if (g.open) return;
+            buzz('open');
+            setMenu(true);
+            progress.setValue(0);
+            Animated.spring(progress, { toValue: 1, friction: 7, tension: 90, useNativeDriver: true }).start(() => {
+                setTimeout(() => {
+                    if (g.open && !g.moved && !g.hover) {
+                        close();
+                    }
+                }, 2200);
+            });
+        }, 5000);
+
+        return () => clearTimeout(autoTimer);
+    }, []);
 
     const responder = useRef(
         PanResponder.create({
@@ -296,11 +321,11 @@ function AddButton({ progress, onOpenChange }: { progress: Animated.Value; onOpe
                 accessible
                 accessibilityRole="button"
                 accessibilityLabel="Add a transaction"
-                accessibilityHint="Hold and slide to spend, earn or lend"
+                accessibilityHint="Hold and slide to earn, spend or lend"
                 accessibilityActions={[
                     { name: 'activate', label: 'Add a transaction' },
-                    { name: 'spend', label: 'Spend' },
                     { name: 'earn', label: 'Earn' },
+                    { name: 'spend', label: 'Spend' },
                     { name: 'lend', label: 'Lend' },
                 ]}
                 onAccessibilityAction={(event) => {
@@ -335,13 +360,16 @@ export function FloatingTabBar({ state, emitter, navigateToTab }: BottomTabBarPr
     const left = items.slice(0, 2);
     const right = items.slice(2);
 
+    const { t } = useTranslation();
     const renderTab = ({ route, index, Icon, label }: (typeof items)[number]) => {
+        const tabKey = ('tab_' + route.name) as any;
+        const localizedLabel = t(tabKey) || label;
         const focused = state.index === index;
         return (
             <Pressable
                 key={route.key}
                 accessibilityRole="tab"
-                accessibilityLabel={label}
+                accessibilityLabel={localizedLabel}
                 accessibilityState={{ selected: focused }}
                 onPress={() => {
                     tap();

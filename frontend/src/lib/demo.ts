@@ -175,20 +175,33 @@ const summary = (month: string, tz: number, scope: 'family' | 'me' = 'family'): 
 };
 
 // Same bucketing as the real API: last 7 days, last 8 Monday-to-Sunday weeks, last 6 calendar months.
-const trend = (range: TrendRange, tz: number, scope: SummaryScope): Trend => {
+const trend = (range: TrendRange, tz: number, scope: SummaryScope, single = false): Trend => {
     const shift = tz * 60000;
     const localNow = new Date(Date.now() + shift);
     const todayLocal = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate());
-    const count = { day: 7, week: 8, month: 6 }[range];
-
     const starts: number[] = [];
-    for (let i = count - 1; i >= 0; i--) {
-        if (range === 'day') starts.push(todayLocal - i * DAY);
-        else if (range === 'week') starts.push(todayLocal - ((localNow.getUTCDay() + 6) % 7) * DAY - i * 7 * DAY);
-        else starts.push(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth() - i, 1));
+
+    if (single) {
+        if (range === 'day') starts.push(todayLocal);
+        else if (range === 'week') {
+            for (let i = 6; i >= 0; i--) starts.push(todayLocal - i * DAY);
+        } else if (range === 'year') {
+            for (let i = 0; i < 12; i++) starts.push(Date.UTC(localNow.getUTCFullYear(), i, 1));
+        } else {
+            starts.push(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), 1));
+        }
+    } else {
+        const count = { day: 7, week: 8, month: 6, year: 12 }[range] || 7;
+        for (let i = count - 1; i >= 0; i--) {
+            if (range === 'day') starts.push(todayLocal - i * DAY);
+            else if (range === 'week') starts.push(todayLocal - ((localNow.getUTCDay() + 6) % 7) * DAY - i * 7 * DAY);
+            else if (range === 'year') starts.push(Date.UTC(localNow.getUTCFullYear(), 11 - i, 1));
+            else starts.push(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth() - i, 1));
+        }
     }
+
     const endOf = (start: number) => {
-        if (range === 'day') return start + DAY;
+        if (range === 'day' || (single && range === 'week')) return start + DAY;
         if (range === 'week') return start + 7 * DAY;
         const d = new Date(start);
         return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
@@ -298,6 +311,10 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
                         date: it.date || new Date().toISOString(), createdAt: new Date().toISOString(),
                         dedupeKey: it.dedupeKey || null,
                         countForNextMonth: Boolean(it.countForNextMonth),
+                        isSplit: Boolean(it.isSplit),
+                        myShare: it.myShare ?? null,
+                        lentAmount: it.lentAmount ?? null,
+                        splitWith: it.splitWith ?? null,
                     };
                     txs.unshift(tx);
                     createdIds.push(tx.id);
@@ -324,6 +341,10 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
                     amount: body.amount, type: body.type, category: body.category, description: body.description || '',
                     paymentMethod: body.paymentMethod || null, source: body.source || 'manual',
                     countForNextMonth: Boolean(body.countForNextMonth),
+                    isSplit: Boolean(body.isSplit),
+                    myShare: body.myShare ?? null,
+                    lentAmount: body.lentAmount ?? null,
+                    splitWith: body.splitWith ?? null,
                     date: body.date || new Date().toISOString(), createdAt: new Date().toISOString(),
                 };
                 if (body.dedupeKey && txs.some((t) => (t as any).dedupeKey === body.dedupeKey)) throw new ApiError('Duplicate transaction', 409);
@@ -340,8 +361,8 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
             if (method === 'DELETE') { txs = txs.filter((t) => t.id !== seg[1]); return { message: 'Transaction deleted' }; }
             if (seg[2] === 'summary') return summary(q.month, parseInt(q.tzOffset || '0', 10), q.scope === 'me' ? 'me' : 'family');
             if (seg[2] === 'trend') {
-                const range = (['day', 'week', 'month'] as const).find((r) => r === q.range) ?? 'day';
-                return trend(range, parseInt(q.tzOffset || '0', 10), q.scope === 'me' ? 'me' : 'family');
+                const range = (['day', 'week', 'month', 'year'] as const).find((r) => r === q.range) ?? 'day';
+                return trend(range, parseInt(q.tzOffset || '0', 10), q.scope === 'me' ? 'me' : 'family', q.single === '1');
             }
 
             let list = [...txs].sort((a, b) => b.date.localeCompare(a.date));

@@ -856,3 +856,51 @@ test('edge cases and error resilience', async () => {
     const badRecDate = await call('PUT', `/api/recurring/${rec.body.id}`, { as: owner, body: { nextRunDate: 'invalid-date' } });
     assert.equal(badRecDate.status, 400);
 });
+
+
+test('transactions: split expense persists isSplit, myShare, lentAmount, splitWith', async () => {
+    const { owner, familyId } = await setup();
+    const splitTx = await addTx(owner, familyId, {
+        amount: 300,
+        type: 'expense',
+        category: 'Food',
+        description: 'Dinner with friends',
+        isSplit: true,
+        myShare: 100,
+        lentAmount: 200,
+        splitWith: 'Friends',
+    });
+    assert.equal(splitTx.status, 201);
+    assert.ok(splitTx.body.id);
+
+    const list = await call('GET', `/api/transactions/${familyId}`, { as: owner });
+    const found = list.body.find((t) => t.id === splitTx.body.id);
+    assert.ok(found);
+    assert.equal(found.isSplit, true);
+    assert.equal(found.myShare, 100);
+    assert.equal(found.lentAmount, 200);
+    assert.equal(found.splitWith, 'Friends');
+
+    // Update split details
+    const updated = await call('PUT', `/api/transactions/${splitTx.body.id}`, {
+        as: owner,
+        body: {
+            isSplit: true,
+            myShare: 120,
+            lentAmount: 180,
+            splitWith: 'Rahul',
+        },
+    });
+    assert.equal(updated.status, 200);
+    const refreshed = await call('GET', `/api/transactions/${familyId}`, { as: owner });
+    const updatedFound = refreshed.body.find((t) => t.id === splitTx.body.id);
+    assert.equal(updatedFound.myShare, 120);
+    assert.equal(updatedFound.lentAmount, 180);
+    assert.equal(updatedFound.splitWith, 'Rahul');
+
+    // Test single=1 and range=year for trend
+    const yearTrend = await call('GET', `/api/transactions/${familyId}/trend?range=year&single=1`, { as: owner });
+    assert.equal(yearTrend.status, 200);
+    assert.equal(yearTrend.body.range, 'year');
+    assert.ok(yearTrend.body.buckets.length > 0);
+});
