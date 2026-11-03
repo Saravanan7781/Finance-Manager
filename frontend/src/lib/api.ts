@@ -117,7 +117,7 @@ export const api = {
 
     transactions: (
         familyId: string,
-        opts: { type?: TxType; category?: string; from?: string; to?: string; limit?: number; startAfter?: string; scope?: SummaryScope; search?: string } = {}
+        opts: { type?: TxType; category?: string; from?: string; to?: string; month?: string; tzOffset?: number; limit?: number; startAfter?: string; scope?: SummaryScope; search?: string } = {}
     ) => request<Tx[]>('GET', `/transactions/${familyId}${query(opts)}`),
     trend: (familyId: string, range: TrendRange, tzOffset: number, scope: SummaryScope = 'family') =>
         request<Trend>('GET', `/transactions/${familyId}/trend${query({ range, tzOffset, scope })}`),

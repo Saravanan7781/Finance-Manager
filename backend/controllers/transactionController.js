@@ -55,6 +55,7 @@ exports.addTransaction = async (req, res, next) => {
             paymentMethod: paymentMethod || null,
             source: source || 'manual',
             dedupeKey: dedupeKey || null,
+            countForNextMonth: Boolean(req.body.countForNextMonth),
             keywords,
             date: txDate,
             createdAt: new Date(),
@@ -141,6 +142,7 @@ exports.addBatchTransactions = async (req, res, next) => {
                 paymentMethod: item.paymentMethod || null,
                 source: item.source || 'sms',
                 dedupeKey: item.dedupeKey || null,
+                countForNextMonth: Boolean(item.countForNextMonth),
                 keywords,
                 date: txDate,
                 createdAt: new Date(),
@@ -248,18 +250,33 @@ exports.deleteAllSmsTransactions = async (req, res, next) => {
 exports.getTransactions = async (req, res, next) => {
     try {
         const { familyId } = req.params;
-        const { startAfter, from, to, type, category, search, q } = req.query;
+        const { startAfter, from, to, type, category, search, q, month } = req.query;
         const searchTerm = (search || q || '').trim();
         const limit = parseLimit(req.query.limit);
 
         await getFamilyForMember(familyId, req.user.uid);
 
+        let fromDate = from && !isNaN(new Date(from)) ? new Date(from) : null;
+        let toDateVal = to && !isNaN(new Date(to)) ? new Date(to) : null;
+        let monthFilter = null;
+
+        if (month && /^\d{4}-\d{2}$/.test(month)) {
+            const [y, m] = month.split('-').map(Number);
+            const tzOffset = parseInt(req.query.tzOffset, 10) || 0;
+            const monthStart = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0) - tzOffset * 60000);
+            const monthEnd = new Date(Date.UTC(y, m, 1, 0, 0, 0) - tzOffset * 60000);
+            const prevStart = new Date(Date.UTC(y, m - 2, 1, 0, 0, 0) - tzOffset * 60000);
+            monthFilter = { monthStart, monthEnd, prevStart };
+            fromDate = prevStart;
+            toDateVal = monthEnd;
+        }
+
         let query = db.collection('transactions').where('familyId', '==', familyId);
         if (type === 'income' || type === 'expense') query = query.where('type', '==', type);
         if (req.query.scope === 'me') query = query.where('createdBy', '==', req.user.uid);
         if (category) query = query.where('category', '==', String(category));
-        if (from && !isNaN(new Date(from))) query = query.where('date', '>=', new Date(from));
-        if (to && !isNaN(new Date(to))) query = query.where('date', '<=', new Date(to));
+        if (fromDate) query = query.where('date', '>=', fromDate);
+        if (toDateVal) query = query.where('date', '<=', toDateVal);
 
         if (searchTerm.length >= 2) {
             query = query.where('keywords', 'array-contains', searchTerm.toLowerCase());
@@ -276,6 +293,17 @@ exports.getTransactions = async (req, res, next) => {
 
         const snapshot = await query.get();
         let items = snapshot.docs.map(serializeDoc);
+
+        if (monthFilter) {
+            items = items.filter((tx) => {
+                const d = new Date(tx.date);
+                const countNext = Boolean(tx.countForNextMonth);
+                if (countNext) {
+                    return d >= monthFilter.prevStart && d < monthFilter.monthStart;
+                }
+                return d >= monthFilter.monthStart && d < monthFilter.monthEnd;
+            });
+        }
 
         if (searchTerm) {
             const lower = searchTerm.toLowerCase();
@@ -317,6 +345,10 @@ exports.updateTransaction = async (req, res, next) => {
             const d = new Date(req.body.date);
             if (isNaN(d.getTime())) throw new HttpError(400, 'Invalid date');
             updates.date = d;
+        }
+
+        if (req.body.countForNextMonth !== undefined) {
+            updates.countForNextMonth = Boolean(req.body.countForNextMonth);
         }
 
         if (Object.keys(updates).length === 0) throw new HttpError(400, 'Nothing to update');
@@ -519,11 +551,17 @@ exports.getSummary = async (req, res, next) => {
             const t = doc.data();
             const when = toDate(t.date);
             const isExpense = t.type === 'expense';
+            const countForNextMonth = Boolean(t.countForNextMonth);
 
-            if (when >= previous.start && when < previous.end && isExpense) {
+            if (when >= previous.start && when < previous.end && isExpense && !countForNextMonth) {
                 previousExpense += t.amount;
             }
-            if (when < current.start || when >= current.end) return;
+
+            const inCurrent = countForNextMonth
+                ? (when >= previous.start && when < previous.end)
+                : (when >= current.start && when < current.end);
+
+            if (!inCurrent) return;
 
             transactionCount += 1;
             const day = new Date(when.getTime() + tzOffset * 60000).toISOString().slice(0, 10);

@@ -9,6 +9,7 @@ export interface ParsedSms {
     paymentMethod: 'UPI' | 'Card' | 'Bank';
     dedupeKey: string;
     date?: string;
+    countForNextMonth?: boolean;
     rawBody?: string;
 }
 

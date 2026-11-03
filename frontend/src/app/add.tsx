@@ -3,7 +3,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Calendar, MessageSquare, Plus, Sparkles, Trash2 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { Platform, Pressable, TextInput, View } from 'react-native';
+import { Platform, Pressable, Switch, TextInput, View } from 'react-native';
 import { DatePickerSheet } from '@/components/DatePickerSheet';
 import { Header } from '@/components/Header';
 import { Chip, ErrorBanner, Field, Glass, IconButton, PillButton, Screen, Segmented, SuccessBanner, T } from '@/components/ui';
@@ -26,6 +26,7 @@ export default function AddTransaction() {
         description?: string;
         paymentMethod?: string;
         date?: string;
+        countForNextMonth?: string;
     }>();
     const familyId = useFamilyId();
     const editing = params.id;
@@ -46,6 +47,9 @@ export default function AddTransaction() {
     const [success, setSuccess] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    const [countForNextMonth, setCountForNextMonth] = useState(
+        params.countForNextMonth === '1' || params.countForNextMonth === 'true'
+    );
 
     // Fetch custom categories
     useEffect(() => {
@@ -70,6 +74,12 @@ export default function AddTransaction() {
             setType(parsed.type);
             setAmount(formatAmountInput(String(parsed.amount)));
             if (parsed.merchant) setDescription(parsed.merchant);
+            if (parsed.countForNextMonth !== undefined) {
+                setCountForNextMonth(Boolean(parsed.countForNextMonth));
+            } else if (parsed.category === 'Salary') {
+                const parsedDate = fromDateInput(dateText);
+                if (parsedDate && parsedDate.getDate() >= 23) setCountForNextMonth(true);
+            }
             if (parsed.paymentMethod) setMethod(parsed.paymentMethod);
             setDedupeKey(parsed.dedupeKey);
             setSource('sms');
@@ -105,6 +115,9 @@ export default function AddTransaction() {
                 setDescription(tx.description);
                 setMethod(tx.paymentMethod);
                 setDateText(toDateInput(new Date(tx.date)));
+                if (tx.countForNextMonth !== undefined) {
+                    setCountForNextMonth(Boolean(tx.countForNextMonth));
+                }
             })
             .catch((e) => setError((e as Error).message));
     }, [editing, familyId, params.amount]);
@@ -141,12 +154,21 @@ export default function AddTransaction() {
         setError(null);
         setSuccess(null);
         try {
+            const flagCountNext = (category === 'Salary' || type === 'income') ? countForNextMonth : false;
             if (editing) {
                 if (params.date && toDateInput(new Date(params.date)) === dateText) {
                     const orig = new Date(params.date);
                     if (!isNaN(orig.getTime())) finalDate = orig;
                 }
-                await api.updateTransaction(editing, { amount: value, type, category, description: description.trim(), paymentMethod: method, date: finalDate.toISOString() });
+                await api.updateTransaction(editing, {
+                    amount: value,
+                    type,
+                    category,
+                    description: description.trim(),
+                    paymentMethod: method,
+                    date: finalDate.toISOString(),
+                    countForNextMonth: flagCountNext,
+                });
                 router.back();
             } else {
                 await api.addTransaction({
@@ -159,6 +181,7 @@ export default function AddTransaction() {
                     date: finalDate.toISOString(),
                     source,
                     dedupeKey,
+                    countForNextMonth: flagCountNext,
                 });
                 if (keepOpen) {
                     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -251,7 +274,13 @@ export default function AddTransaction() {
             <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>CATEGORY</T>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: space.lg }}>
                 {categoriesFor(type, customCategories).map((c) => (
-                    <Chip key={c.name} label={c.name} Icon={c.Icon} active={category === c.name} onPress={() => setCategory(c.name)} />
+                    <Chip key={c.name} label={c.name} Icon={c.Icon} active={category === c.name} onPress={() => {
+                        setCategory(c.name);
+                        if (c.name === 'Salary') {
+                            const parsedD = fromDateInput(dateText);
+                            if (parsedD && parsedD.getDate() >= 23) setCountForNextMonth(true);
+                        }
+                    }} />
                 ))}
             </View>
 
@@ -307,6 +336,23 @@ export default function AddTransaction() {
                         />
                     </View>
                 </View>
+
+                {(category === 'Salary' || type === 'income') && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                        <View style={{ flex: 1, paddingRight: space.md }}>
+                            <T variant="heading" style={{ fontSize: 15 }}>Count as next month</T>
+                            <T variant="tiny" color={colors.inkSoft}>
+                                Count this salary towards next month's received income while keeping the original date
+                            </T>
+                        </View>
+                        <Switch
+                            value={countForNextMonth}
+                            onValueChange={setCountForNextMonth}
+                            trackColor={{ false: colors.mint2, true: colors.ink }}
+                            thumbColor={Platform.OS === 'android' ? colors.white : undefined}
+                        />
+                    </View>
+                )}
             </Glass>
 
             <View style={{ marginTop: space.xl, gap: 10 }}>

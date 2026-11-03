@@ -66,6 +66,7 @@ export interface Tx {
     paymentMethod: string | null;
     source: 'manual' | 'sms';
     date: string;
+    countForNextMonth?: boolean;
     createdAt: string;
 }
 
@@ -79,6 +80,7 @@ export interface TxInput {
     date?: string;
     source?: 'manual' | 'sms';
     dedupeKey?: string | null;
+    countForNextMonth?: boolean;
 }
 
 export interface CategoryShare {

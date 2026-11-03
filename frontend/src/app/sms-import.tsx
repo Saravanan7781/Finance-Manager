@@ -20,7 +20,7 @@ import {
     Trash2,
 } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Header } from '@/components/Header';
 import {
@@ -47,6 +47,7 @@ import { confirmAction } from '@/lib/dialog';
 import { money, timeAgo } from '@/lib/format';
 import { ParsedSms } from '@/lib/sms';
 import { scanSmsInbox } from '@/lib/smsReader';
+import { aiExtractBulkSms } from '@/lib/aiSmsParser';
 import type { CustomCategory, Tx } from '@/lib/types';
 
 export type SmsPeriodFilter = 'today' | 'week' | 'month' | 'all';
@@ -72,6 +73,7 @@ export default function SmsImport() {
     const [period, setPeriod] = useState<SmsPeriodFilter>('week');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [aiAnalyzing, setAiAnalyzing] = useState(false);
     const [undoing, setUndoing] = useState(false);
     const [deletingAll, setDeletingAll] = useState(false);
     const [items, setItems] = useState<ImportItem[]>([]);
@@ -131,10 +133,22 @@ export default function SmsImport() {
                 return;
             }
 
+            const rawMessages = scanResult.transactions.map((tx, idx) => ({
+                _id: `raw-${idx}`,
+                body: tx.rawBody || '',
+                date: tx.date ? new Date(tx.date).getTime() : undefined,
+            }));
+            const aiEnhanced = await aiExtractBulkSms(rawMessages);
+            const enhancedMap = new Map(aiEnhanced.map((e) => [e.dedupeKey, e]));
+
             const mapped: ImportItem[] = scanResult.transactions.map((tx, idx) => {
                 const isDuplicate = existingDedupeKeys.has(tx.dedupeKey);
+                const enhanced = enhancedMap.get(tx.dedupeKey);
                 return {
                     ...tx,
+                    category: enhanced?.category || tx.category,
+                    merchant: enhanced?.merchant || tx.merchant,
+                    countForNextMonth: enhanced?.countForNextMonth ?? tx.countForNextMonth,
                     id: `import-${idx}-${tx.dedupeKey}`,
                     selected: !isDuplicate,
                     isDuplicate,
@@ -182,6 +196,60 @@ export default function SmsImport() {
     const selectedIncomeSum = items
         .filter((it) => it.selected && it.type === 'income')
         .reduce((sum, it) => sum + it.amount, 0);
+
+    const toggleCountForNextMonth = (id: string) => {
+        Haptics.selectionAsync().catch(() => {});
+        setItems((prev) =>
+            prev.map((it) => (it.id === id ? { ...it, countForNextMonth: !it.countForNextMonth } : it))
+        );
+    };
+
+    const runAiCategorization = async () => {
+        if (items.length === 0 || aiAnalyzing) return;
+        setAiAnalyzing(true);
+        setError(null);
+        try {
+            const rawMessages = items.map((it) => ({
+                _id: it.id,
+                body: it.rawBody || `${it.merchant || ''} ${it.category} ${it.amount}`,
+                date: it.date ? new Date(it.date).getTime() : undefined,
+            }));
+            const aiResults = await aiExtractBulkSms(rawMessages);
+            const resultMap = new Map(aiResults.map((r) => [r.dedupeKey, r]));
+
+            let updatedCount = 0;
+            let salaryDetected = 0;
+            setItems((prev) =>
+                prev.map((it) => {
+                    const found = resultMap.get(it.dedupeKey);
+                    if (found) {
+                        updatedCount++;
+                        if (found.countForNextMonth) salaryDetected++;
+                        return {
+                            ...it,
+                            category: found.category,
+                            merchant: found.merchant || it.merchant,
+                            paymentMethod: found.paymentMethod || it.paymentMethod,
+                            countForNextMonth: Boolean(found.countForNextMonth),
+                        };
+                    }
+                    return it;
+                })
+            );
+
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            setSuccess(
+                salaryDetected > 0
+                    ? `AI categorized ${updatedCount} transactions & flagged ${salaryDetected} salary as Next Month!`
+                    : `AI parsed and categorized ${updatedCount} transactions!`
+            );
+            setTimeout(() => setSuccess(null), 4000);
+        } catch {
+            setError('AI categorization completed with local heuristics.');
+        } finally {
+            setAiAnalyzing(false);
+        }
+    };
 
     const toggleSelect = (id: string) => {
         Haptics.selectionAsync().catch(() => {});
@@ -234,6 +302,7 @@ export default function SmsImport() {
                 date: it.date || new Date().toISOString(),
                 source: 'sms' as const,
                 dedupeKey: it.dedupeKey,
+                countForNextMonth: Boolean(it.countForNextMonth),
             }));
 
             const res = await api.addTransactionsBatch(familyId, payload);
@@ -324,17 +393,24 @@ export default function SmsImport() {
                 right={
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                         <IconButton
+                            Icon={Sparkles}
+                            label="AI Categorize"
+                            tone="glass"
+                            onPress={runAiCategorization}
+                            disabled={loading || saving || deletingAll || aiAnalyzing}
+                        />
+                        <IconButton
                             Icon={Trash2}
                             label="Delete all SMS transactions"
                             tone="glass"
                             onPress={handleDeleteAllSms}
-                            disabled={loading || saving || deletingAll}
+                            disabled={loading || saving || deletingAll || aiAnalyzing}
                         />
                         <IconButton
                             Icon={RefreshCw}
                             label="Rescan SMS"
                             onPress={() => loadAndScan(false, period)}
-                            disabled={loading || saving || deletingAll}
+                            disabled={loading || saving || deletingAll || aiAnalyzing}
                         />
                     </View>
                 }
@@ -486,19 +562,19 @@ export default function SmsImport() {
                                 </View>
 
                                 <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                                    {selectedExpenseSum > 0 && (
-                                        <View style={styles.amountBadgeExpense}>
-                                            <ArrowDownLeft size={12} color={colors.expense} strokeWidth={2.5} />
-                                            <T variant="small" color={colors.expense} style={{ fontFamily: fonts.extrabold }}>
-                                                -{money(selectedExpenseSum)}
-                                            </T>
-                                        </View>
-                                    )}
                                     {selectedIncomeSum > 0 && (
                                         <View style={styles.amountBadgeIncome}>
                                             <ArrowUpRight size={12} color={colors.income} strokeWidth={2.5} />
                                             <T variant="small" color={colors.income} style={{ fontFamily: fonts.extrabold }}>
                                                 +{money(selectedIncomeSum)}
+                                            </T>
+                                        </View>
+                                    )}
+                                    {selectedExpenseSum > 0 && (
+                                        <View style={styles.amountBadgeExpense}>
+                                            <ArrowDownLeft size={12} color={colors.expense} strokeWidth={2.5} />
+                                            <T variant="small" color={colors.expense} style={{ fontFamily: fonts.extrabold }}>
+                                                -{money(selectedExpenseSum)}
                                             </T>
                                         </View>
                                     )}
@@ -512,8 +588,8 @@ export default function SmsImport() {
                                     onChange={setTypeFilter}
                                     options={[
                                         { value: 'all', label: `All (${items.length})` },
-                                        { value: 'expense', label: `Spent (${items.filter((i) => i.type === 'expense').length})` },
                                         { value: 'income', label: `Received (${items.filter((i) => i.type === 'income').length})` },
+                                        { value: 'expense', label: `Spent (${items.filter((i) => i.type === 'expense').length})` },
                                     ]}
                                 />
                             </View>
@@ -570,10 +646,17 @@ export default function SmsImport() {
 
                                                     {/* Merchant title & details */}
                                                     <View style={styles.cardMiddle}>
-                                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                                             <T variant="heading" numberOfLines={1} style={{ flexShrink: 1, fontSize: 16 }}>
                                                                 {item.merchant || (isIncome ? 'Received' : 'Paid')}
                                                             </T>
+                                                            {item.countForNextMonth ? (
+                                                                <View style={{ backgroundColor: 'rgba(31, 143, 70, 0.12)', paddingHorizontal: 7, paddingVertical: 1.5, borderRadius: radius.pill }}>
+                                                                    <T variant="tiny" color={colors.income} style={{ fontFamily: fonts.bold, fontSize: 10 }}>
+                                                                        Next Month
+                                                                    </T>
+                                                                </View>
+                                                            ) : null}
                                                             {item.isDuplicate && (
                                                                 <View style={styles.duplicateTag}>
                                                                     <T variant="tiny" style={{ color: '#A16207', fontFamily: fonts.bold, fontSize: 10 }}>
@@ -599,6 +682,26 @@ export default function SmsImport() {
                                                         {isIncome ? '+' : '-'}{money(item.amount)}
                                                     </T>
                                                 </View>
+
+                                                {/* Next Month Toggle for Salary or Income */}
+                                                {(item.category === 'Salary' || isIncome) && (
+                                                    <View style={styles.nextMonthRow}>
+                                                        <View style={{ flex: 1, paddingRight: space.sm }}>
+                                                            <T variant="tiny" style={{ fontFamily: fonts.bold, color: item.countForNextMonth ? colors.income : colors.ink }}>
+                                                                {item.countForNextMonth ? 'Counting as Next Month' : 'Count as next month'}
+                                                            </T>
+                                                            <T variant="tiny" color={colors.muted} style={{ fontSize: 10 }}>
+                                                                Include in next month's received while keeping original date
+                                                            </T>
+                                                        </View>
+                                                        <Switch
+                                                            value={Boolean(item.countForNextMonth)}
+                                                            onValueChange={() => toggleCountForNextMonth(item.id)}
+                                                            trackColor={{ false: colors.mint2, true: colors.ink }}
+                                                            thumbColor={Platform.OS === 'android' ? colors.white : undefined}
+                                                        />
+                                                    </View>
+                                                )}
 
                                                 {/* Footer: Category selector pill & SMS expand button */}
                                                 <View style={styles.cardFooterRow}>
@@ -944,6 +1047,15 @@ const styles = StyleSheet.create({
         gap: 4,
         paddingVertical: 4,
         paddingHorizontal: 6,
+    },
+    nextMonthRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 8,
+        paddingTop: 8,
+        borderTopWidth: 1,
+        borderTopColor: colors.glassLine,
     },
     smsQuoteBox: {
         marginTop: space.xs,

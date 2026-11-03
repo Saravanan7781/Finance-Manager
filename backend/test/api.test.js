@@ -318,6 +318,41 @@ test('transactions: delete all SMS transactions removes all source=sms entries',
     assert.equal(listRes.body[0].description, 'Manual entry');
 });
 
+test('summary: salary with countForNextMonth is added to next month received', async () => {
+    const { owner, familyId } = await setup();
+
+    // Salary received on Oct 31st with countForNextMonth = true
+    await addTx(owner, familyId, {
+        amount: 50000,
+        type: 'income',
+        category: 'Salary',
+        description: 'Monthly Salary',
+        date: '2026-10-31T18:00:00.000Z',
+        countForNextMonth: true,
+    });
+
+    // October summary should NOT include this salary
+    const octRes = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10`, { as: owner });
+    assert.equal(octRes.status, 200);
+    assert.equal(octRes.body.income, 0);
+
+    // November summary SHOULD include this salary in received income!
+    const novRes = await call('GET', `/api/transactions/${familyId}/summary?month=2026-11`, { as: owner });
+    assert.equal(novRes.status, 200);
+    assert.equal(novRes.body.income, 50000);
+
+    // In transactions list: October list does NOT include it, but November list DOES include it!
+    const octList = await call('GET', `/api/transactions/${familyId}?month=2026-10`, { as: owner });
+    assert.equal(octList.status, 200);
+    assert.equal(octList.body.length, 0);
+
+    const novList = await call('GET', `/api/transactions/${familyId}?month=2026-11`, { as: owner });
+    assert.equal(novList.status, 200);
+    assert.equal(novList.body.length, 1);
+    assert.equal(novList.body[0].amount, 50000);
+    assert.equal(novList.body[0].countForNextMonth, true);
+});
+
 test('summary totals, category shares and month comparison', async () => {
     const { owner, member, familyId } = await setup();
 

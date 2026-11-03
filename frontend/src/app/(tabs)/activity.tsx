@@ -62,8 +62,10 @@ export default function Activity() {
         type,
         category: serverCategory,
         scope: mine ? ('me' as const) : undefined,
-        from: range?.from,
-        to: range?.to,
+        from: month ? undefined : range?.from,
+        to: month ? undefined : range?.to,
+        month: month || undefined,
+        tzOffset: month ? tzOffset() : undefined,
         limit: pageSize,
         search: debouncedSearch || undefined,
     };
@@ -246,8 +248,8 @@ export default function Activity() {
                     }}
                     options={[
                         { value: 'all', label: 'All' },
-                        { value: 'expense', label: 'Spent' },
                         { value: 'income', label: 'Received' },
+                        { value: 'expense', label: 'Spent' },
                     ]}
                 />
             </View>
@@ -261,18 +263,18 @@ export default function Activity() {
 
             <Glass strong style={styles.stats}>
                 <View style={styles.stat}>
-                    <T variant="tiny" color={colors.muted}>SPENT</T>
+                    <T variant="tiny" color={colors.muted}>RECEIVED</T>
                     {data ? (
-                        <T variant="heading" color={colors.expense} style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{money(spent)}</T>
+                        <T variant="heading" color={colors.income} style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{money(received)}</T>
                     ) : (
                         <Skeleton width={96} height={22} style={{ marginTop: 4 }} />
                     )}
                 </View>
                 <View style={styles.statLine} />
                 <View style={styles.stat}>
-                    <T variant="tiny" color={colors.muted}>RECEIVED</T>
+                    <T variant="tiny" color={colors.muted}>SPENT</T>
                     {data ? (
-                        <T variant="heading" color={colors.income} style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{money(received)}</T>
+                        <T variant="heading" color={colors.expense} style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{money(spent)}</T>
                     ) : (
                         <Skeleton width={96} height={22} style={{ marginTop: 4 }} />
                     )}
@@ -335,6 +337,7 @@ export default function Activity() {
                                                 description: tx.description || '',
                                                 paymentMethod: tx.paymentMethod || '',
                                                 date: tx.date,
+                                                countForNextMonth: tx.countForNextMonth ? '1' : '0',
                                             },
                                         })
                                     }

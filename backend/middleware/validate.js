@@ -42,8 +42,10 @@ const transactionValidation = [
     body('description').optional().trim().isLength({ max: 500 }).withMessage('Description too long'),
     body('date').optional().isISO8601().withMessage('Invalid date format'),
     body('paymentMethod').optional({ values: 'null' }).trim().isLength({ max: 30 }).withMessage('Payment method too long'),
+    body('countForNextMonth').optional().isBoolean(),
     body('source').optional().isIn(['manual', 'sms']).withMessage('Source must be manual or sms'),
     body('dedupeKey').optional({ values: 'null' }).isString().isLength({ max: 200 }).withMessage('Dedupe key too long'),
+    body('countForNextMonth').optional().isBoolean(),
     handleValidationErrors,
 ];
 

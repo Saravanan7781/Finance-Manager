@@ -54,9 +54,18 @@ export function TxRow({ tx, onPress, showTime = false, flat = false }: { tx: Tx;
             </View>
 
             <View style={styles.middle}>
-                <T variant="body" numberOfLines={1} style={{ fontFamily: fonts.bold }}>
-                    {title}
-                </T>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <T variant="body" numberOfLines={1} style={{ fontFamily: fonts.bold, flexShrink: 1 }}>
+                        {title}
+                    </T>
+                    {tx.countForNextMonth ? (
+                        <View style={{ backgroundColor: 'rgba(31, 143, 70, 0.12)', paddingHorizontal: 7, paddingVertical: 1.5, borderRadius: radius.pill }}>
+                            <T variant="tiny" color={colors.income} style={{ fontFamily: fonts.bold, fontSize: 10 }}>
+                                Next Month
+                            </T>
+                        </View>
+                    ) : null}
+                </View>
                 <View style={styles.sub}>
                     <T variant="small" color={colors.muted} numberOfLines={1}>
                         {income ? 'Received' : 'Paid'}

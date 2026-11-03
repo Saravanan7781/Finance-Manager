@@ -297,6 +297,7 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
                         paymentMethod: it.paymentMethod || null, source: it.source || 'sms',
                         date: it.date || new Date().toISOString(), createdAt: new Date().toISOString(),
                         dedupeKey: it.dedupeKey || null,
+                        countForNextMonth: Boolean(it.countForNextMonth),
                     };
                     txs.unshift(tx);
                     createdIds.push(tx.id);
@@ -322,6 +323,7 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
                     id: id('t'), familyId: FAMILY, createdBy: ME, createdByName: displayName,
                     amount: body.amount, type: body.type, category: body.category, description: body.description || '',
                     paymentMethod: body.paymentMethod || null, source: body.source || 'manual',
+                    countForNextMonth: Boolean(body.countForNextMonth),
                     date: body.date || new Date().toISOString(), createdAt: new Date().toISOString(),
                 };
                 if (body.dedupeKey && txs.some((t) => (t as any).dedupeKey === body.dedupeKey)) throw new ApiError('Duplicate transaction', 409);
@@ -346,8 +348,23 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
             if (q.scope === 'me') list = list.filter((t) => t.createdBy === ME);
             if (q.type) list = list.filter((t) => t.type === q.type);
             if (q.category) list = list.filter((t) => t.category === q.category);
-            if (q.from) list = list.filter((t) => t.date >= q.from);
-            if (q.to) list = list.filter((t) => t.date <= q.to);
+            if (q.month && /^\d{4}-\d{2}$/.test(q.month)) {
+                const [y, m] = q.month.split('-').map(Number);
+                const tzOffset = parseInt(q.tzOffset || '0', 10);
+                const monthStart = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0) - tzOffset * 60000).toISOString();
+                const monthEnd = new Date(Date.UTC(y, m, 1, 0, 0, 0) - tzOffset * 60000).toISOString();
+                const prevStart = new Date(Date.UTC(y, m - 2, 1, 0, 0, 0) - tzOffset * 60000).toISOString();
+                list = list.filter((t) => {
+                    const countNext = Boolean(t.countForNextMonth);
+                    if (countNext) {
+                        return t.date >= prevStart && t.date < monthStart;
+                    }
+                    return t.date >= monthStart && t.date < monthEnd;
+                });
+            } else {
+                if (q.from) list = list.filter((t) => t.date >= q.from);
+                if (q.to) list = list.filter((t) => t.date <= q.to);
+            }
             if (q.search || q.q) {
                 const s = String(q.search || q.q).toLowerCase();
                 list = list.filter((t) =>
