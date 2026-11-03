@@ -43,6 +43,9 @@ export const DICTIONARY = {
         spent: 'SPENT',
         received: 'RECEIVED',
         balance: 'BALANCE',
+        your_balance: 'Your balance',
+        family_balance: 'Family balance',
+        this_month: 'this month',
         net: 'NET',
         all: 'All',
 
@@ -141,6 +144,9 @@ export const DICTIONARY = {
         spent: 'செலவு',
         received: 'வரவு',
         balance: 'இருப்பு',
+        your_balance: 'உங்கள் இருப்பு',
+        family_balance: 'குடும்ப இருப்பு',
+        this_month: 'இந்த மாதம்',
         net: 'நிகர மதிப்பு',
         all: 'அனைத்தும்',
 

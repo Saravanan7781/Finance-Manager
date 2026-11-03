@@ -9,12 +9,14 @@ import { Amount, Avatar, Empty, ErrorBanner, Glass, IconButton, Progress, Reveal
 import { colors, fonts, radius, shadow, space } from '@/constants/theme';
 import { useAuth, useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
+import { useTranslation } from '@/lib/i18n';
 import { api } from '@/lib/api';
 import { bucketTitle, daysUntil, firstName, monthKey, moneyShort, tzOffset } from '@/lib/format';
 import { syncReminders } from '@/lib/notifications';
 import type { SummaryScope, TrendRange } from '@/lib/types';
 
 export default function Home() {
+    const { t } = useTranslation();
     const { me } = useAuth();
     const familyId = useFamilyId();
     const [hidden, setHidden] = useState(false);
@@ -117,10 +119,10 @@ export default function Home() {
                         </View>
                     ) : (
                         <>
-                            <T variant="small" color={colors.inkSoft} style={{ marginBottom: 2 }}>{mine ? 'Your balance' : 'Family balance'}</T>
+                            <T variant="small" color={colors.inkSoft} style={{ marginBottom: 2 }}>{mine ? t('your_balance') : t('family_balance')}</T>
                             <Amount value={summary?.balance ?? 0} size={46} hidden={hidden} mutedColor="rgba(14,16,15,0.38)" animateKey="home-balance" />
                             <T variant="small" color={(summary?.net ?? 0) >= 0 ? colors.income : colors.expense} style={{ fontFamily: fonts.bold, marginTop: 4 }}>
-                                {hidden ? '' : `${(summary?.net ?? 0) >= 0 ? '+' : '-'}${moneyShort(Math.abs(summary?.net ?? 0))} this month`}
+                                {hidden ? '' : `${(summary?.net ?? 0) >= 0 ? '+' : '-'}${moneyShort(Math.abs(summary?.net ?? 0))} ${t('this_month')}`}
                             </T>
                         </>
                     )}
@@ -176,6 +178,10 @@ export default function Home() {
                                             description: tx.description || '',
                                             paymentMethod: tx.paymentMethod || '',
                                             date: tx.date,
+                                            countForNextMonth: tx.countForNextMonth ? '1' : '0',
+                                            isSplit: tx.isSplit ? '1' : '0',
+                                            myShare: tx.myShare != null ? String(tx.myShare) : undefined,
+                                            splitWith: tx.splitWith || undefined,
                                         },
                                     })
                                 }

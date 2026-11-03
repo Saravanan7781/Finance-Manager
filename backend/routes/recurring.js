@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const recurringController = require('../controllers/recurringController');
 const { requireAuth } = require('../middleware/auth');
+const recurringController = require('../controllers/recurringController');
 
+// Safety: fallback empty list if familyId is omitted
+router.get('/', requireAuth, (req, res) => res.json([]));
 router.get('/:familyId', requireAuth, recurringController.getRecurring);
 router.post('/', requireAuth, recurringController.createRecurring);
 router.put('/:id', requireAuth, recurringController.updateRecurring);

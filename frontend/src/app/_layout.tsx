@@ -28,16 +28,16 @@ function Routes() {
 
     return (
         <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
-            <Stack.Protected guard={!signedIn}>
+            <Stack.Protected guard={!signedIn} redirectTo="/(tabs)">
                 <Stack.Screen name="sign-in" />
                 <Stack.Screen name="sign-up" />
             </Stack.Protected>
 
-            <Stack.Protected guard={signedIn && !hasFamily}>
+            <Stack.Protected guard={signedIn && !hasFamily} redirectTo={signedIn ? '/(tabs)' : '/sign-in'}>
                 <Stack.Screen name="onboarding" />
             </Stack.Protected>
 
-            <Stack.Protected guard={hasFamily}>
+            <Stack.Protected guard={hasFamily} redirectTo={!signedIn ? '/sign-in' : '/onboarding'}>
                 <Stack.Screen name="(tabs)" />
                 <Stack.Screen name="add" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
                 <Stack.Screen name="goals" options={{ animation: 'slide_from_right' }} />

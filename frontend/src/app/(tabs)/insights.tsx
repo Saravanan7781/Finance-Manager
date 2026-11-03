@@ -333,6 +333,10 @@ export default function Insights() {
                                                     description: tx.description || '',
                                                     paymentMethod: tx.paymentMethod || '',
                                                     date: tx.date,
+                                                    countForNextMonth: tx.countForNextMonth ? '1' : '0',
+                                                    isSplit: tx.isSplit ? '1' : '0',
+                                                    myShare: tx.myShare != null ? String(tx.myShare) : undefined,
+                                                    splitWith: tx.splitWith || undefined,
                                                 },
                                             });
                                         }}

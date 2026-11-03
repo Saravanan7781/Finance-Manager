@@ -8,6 +8,7 @@ import {
     ActivityIndicator,
     Animated,
     Dimensions,
+    useWindowDimensions,
     Easing,
     KeyboardAvoidingView,
     Modal,
@@ -701,7 +702,7 @@ export function Sheet({
     children: ReactNode;
 }) {
     const insets = useSafeAreaInsets();
-    const windowHeight = Dimensions.get('window').height;
+    const { height: windowHeight } = useWindowDimensions();
     const maxSheetHeight = Math.min(windowHeight * 0.88, 720);
 
     return (
@@ -714,10 +715,10 @@ export function Sheet({
                         {title}
                     </T>
                     <ScrollView
-                        style={{ flexShrink: 1 }}
+                        style={{ flexShrink: 1, flexGrow: 0 }}
                         showsVerticalScrollIndicator={true}
                         keyboardShouldPersistTaps="handled"
-                        contentContainerStyle={{ paddingBottom: space.xl }}
+                        contentContainerStyle={{ flexGrow: 1, paddingBottom: space.xl }}
                         bounces={false}
                         nestedScrollEnabled
                     >

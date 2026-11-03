@@ -357,7 +357,6 @@ export default function Recurring() {
                         onChangeText={(t) => setAmount((prev) => formatAmountInput(t, prev))}
                         placeholder="799"
                         keyboardType="decimal-pad"
-                        autoFocus
                     />
 
                     <Field

@@ -228,7 +228,7 @@ export default function Activity() {
                                             >
                                                 <View style={[styles.dot, { backgroundColor: sliceColor(slice.category) }]} />
                                                 <T variant="small" numberOfLines={1} style={{ flex: 1, fontFamily: selected ? fonts.extrabold : fonts.medium }}>
-                                                    {slice.category}
+                                                    {translateCategory(slice.category)}
                                                 </T>
                                                 <T variant="small" color={colors.inkSoft} style={{ fontFamily: fonts.bold }}>{slice.percent}%</T>
                                             </Pressable>
@@ -249,23 +249,23 @@ export default function Activity() {
                         setCategory(null);
                     }}
                     options={[
-                        { value: 'all', label: 'All' },
-                        { value: 'income', label: 'Received' },
-                        { value: 'expense', label: 'Spent' },
+                        { value: 'all', label: t('all') },
+                        { value: 'income', label: t('received') },
+                        { value: 'expense', label: t('spent') },
                     ]}
                 />
             </View>
 
             {/* Buttons that open a sheet showing every option at once, instead of a row you have to slide through. */}
             <View style={styles.filterRow}>
-                <FilterButton label="Category" value={category} Icon={category ? getCategory(category).Icon : undefined} onPress={() => setSheet('category')} onClear={() => setCategory(null)} />
+                <FilterButton label={t('category')} value={category ? translateCategory(category) : null} Icon={category ? getCategory(category).Icon : undefined} onPress={() => setSheet('category')} onClear={() => setCategory(null)} />
                 <FilterButton label="Month" value={month ? monthLabel(month, true) : null} onPress={() => setSheet('month')} onClear={() => setMonth(null)} />
                 {mine ? <FilterButton label="Just me" value="Just me" onPress={() => setMine(false)} onClear={() => setMine(false)} /> : null}
             </View>
 
             <Glass strong style={styles.stats}>
                 <View style={styles.stat}>
-                    <T variant="tiny" color={colors.muted}>RECEIVED</T>
+                    <T variant="tiny" color={colors.muted}>{t('received')}</T>
                     {data ? (
                         <T variant="heading" color={colors.income} style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{money(received)}</T>
                     ) : (
@@ -274,7 +274,7 @@ export default function Activity() {
                 </View>
                 <View style={styles.statLine} />
                 <View style={styles.stat}>
-                    <T variant="tiny" color={colors.muted}>SPENT</T>
+                    <T variant="tiny" color={colors.muted}>{t('spent')}</T>
                     {data ? (
                         <T variant="heading" color={colors.expense} style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{money(spent)}</T>
                     ) : (
@@ -340,6 +340,9 @@ export default function Activity() {
                                                 paymentMethod: tx.paymentMethod || '',
                                                 date: tx.date,
                                                 countForNextMonth: tx.countForNextMonth ? '1' : '0',
+                                                isSplit: tx.isSplit ? '1' : '0',
+                                                myShare: tx.myShare != null ? String(tx.myShare) : undefined,
+                                                splitWith: tx.splitWith || undefined,
                                             },
                                         })
                                     }
