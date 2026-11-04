@@ -102,7 +102,7 @@ export default function Home() {
                                     style={[styles.scopeOption, scope === option && styles.scopeOptionActive]}
                                 >
                                     <T variant="tiny" color={scope === option ? colors.white : colors.inkSoft} style={{ fontFamily: fonts.bold }}>
-                                        {option === 'family' ? 'FAMILY' : 'ME'}
+                                        {option === 'family' ? t('scope_family') : t('scope_me')}
                                     </T>
                                 </Pressable>
                             ))}
@@ -137,8 +137,8 @@ export default function Home() {
             ) : null}
 
             <SectionHeader
-                title={bucket ? bucketTitle(range, bucket.localStart) : 'Latest Transactions'}
-                action={bucket ? 'Clear' : 'See All'}
+                title={bucket ? bucketTitle(range, bucket.localStart) : t('latest_transactions')}
+                action={bucket ? t('clear_filters') : t('see_all')}
                 onAction={() => (bucket ? setSelected(null) : router.push('/activity'))}
             />
             {bucket ? (
@@ -191,7 +191,7 @@ export default function Home() {
                 </View>
             )}
 
-            <SectionHeader title="Goals" action="Manage" onAction={() => router.push('/goals')} />
+            <SectionHeader title={t('goals')} action={t('manage')} onAction={() => router.push('/goals')} />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: space.lg }} style={{ marginHorizontal: -space.lg, paddingHorizontal: space.lg, overflow: 'visible' }}>
                 {loading && !data ? [0, 1, 2].map((i) => <Skeleton key={i} width={150} height={118} radius={radius.lg} />) : null}
                 {(data?.goals ?? []).slice(0, 4).map((goal) => {
@@ -209,7 +209,7 @@ export default function Home() {
                 {data ? (
                     <Pressable onPress={() => router.push('/goals?new=1')} style={[styles.goalCard, styles.goalAdd]} accessibilityRole="button" accessibilityLabel="Add a goal">
                         <Plus size={26} color={colors.white} strokeWidth={2.2} />
-                        <T variant="body" color={colors.white} style={{ fontFamily: fonts.bold, marginTop: 6 }}>Add goal</T>
+                        <T variant="body" color={colors.white} style={{ fontFamily: fonts.bold, marginTop: 6 }}>{t('add_goal')}</T>
                     </Pressable>
                 ) : null}
             </ScrollView>

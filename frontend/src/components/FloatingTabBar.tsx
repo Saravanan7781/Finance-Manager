@@ -96,56 +96,88 @@ const RAY_WIDTH = 7;
 // A one-time hello on the + button: a ring draws itself around it, then flares out as three rays
 // spark up above it. It never takes touches, and is skipped when the phone asks for reduced motion.
 function FabIntro() {
+    const { t } = useTranslation();
     const [playing, setPlaying] = useState(false);
     const draw = useRef(new Animated.Value(0)).current;
     const burst = useRef(new Animated.Value(0)).current;
     const fade = useRef(new Animated.Value(1)).current;
     const rays = useRef(RAYS.map(() => new Animated.Value(0))).current;
+    const tooltipFade = useRef(new Animated.Value(0)).current;
+    const tooltipSlide = useRef(new Animated.Value(8)).current;
+
+    const playSequence = () => {
+        setPlaying(true);
+        draw.setValue(0);
+        burst.setValue(0);
+        fade.setValue(1);
+        rays.forEach((r) => r.setValue(0));
+        tooltipFade.setValue(0);
+        tooltipSlide.setValue(8);
+
+        buzz('hover');
+
+        Animated.sequence([
+            // 1. Circular outline draws around the button
+            Animated.timing(draw, { toValue: 1, duration: 850, easing: Easing.inOut(Easing.cubic), useNativeDriver: false }),
+            // 2. Rays burst out like little sparks
+            Animated.parallel([
+                Animated.timing(burst, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+                Animated.stagger(
+                    90,
+                    rays.map((value) => Animated.spring(value, { toValue: 1, friction: 5, tension: 160, useNativeDriver: true }))
+                ),
+            ]),
+            // 3. Beautiful "Hold me!" tooltip appears above the button
+            Animated.parallel([
+                Animated.timing(tooltipFade, { toValue: 1, duration: 250, useNativeDriver: true }),
+                Animated.spring(tooltipSlide, { toValue: 0, friction: 6, tension: 120, useNativeDriver: true }),
+            ]),
+            // 4. Hold tooltip visible for 2.8 seconds
+            Animated.delay(2800),
+            // 5. Smooth fade out
+            Animated.parallel([
+                Animated.timing(fade, { toValue: 0, duration: 400, useNativeDriver: true }),
+                Animated.timing(tooltipFade, { toValue: 0, duration: 400, useNativeDriver: true }),
+            ]),
+        ]).start(() => {
+            setPlaying(false);
+        });
+    };
 
     useEffect(() => {
-        let cancelled = false;
-        let tick: ReturnType<typeof setTimeout> | null = null;
+        // Run on app opening after a brief delay
+        const openTimer = setTimeout(playSequence, 1200);
 
-        (async () => {
-            try {
-                const [seen, reduceMotion] = await Promise.all([AsyncStorage.getItem(INTRO_KEY), AccessibilityInfo.isReduceMotionEnabled()]);
-                if (reduceMotion || (seen === '1' && !DEMO)) return;
-                // Marked as seen before it plays, so an interrupted launch cannot make it repeat forever.
-                await AsyncStorage.setItem(INTRO_KEY, '1');
-            } catch {
-                // Storage is only a convenience; if it fails the intro still plays this once.
-            }
-            if (cancelled) return;
-
-            setPlaying(true);
-            tick = setTimeout(() => buzz('hover'), 700 + 950);
-            Animated.sequence([
-                Animated.delay(700),
-                Animated.timing(draw, { toValue: 1, duration: 950, easing: Easing.inOut(Easing.cubic), useNativeDriver: false }),
-                Animated.parallel([
-                    Animated.timing(burst, { toValue: 1, duration: 450, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-                    Animated.stagger(
-                        110,
-                        rays.map((value) => Animated.spring(value, { toValue: 1, friction: 5, tension: 150, useNativeDriver: true }))
-                    ),
-                ]),
-                Animated.delay(1800),
-                Animated.timing(fade, { toValue: 0, duration: 500, useNativeDriver: true }),
-            ]).start(() => {
-                if (!cancelled) setPlaying(false);
-            });
-        })();
+        // Run periodically every 3 minutes
+        const interval = setInterval(playSequence, 3 * 60 * 1000);
 
         return () => {
-            cancelled = true;
-            if (tick) clearTimeout(tick);
+            clearTimeout(openTimer);
+            clearInterval(interval);
         };
-    }, [draw, burst, fade, rays]);
+    }, []);
 
     if (!playing) return null;
 
     return (
         <View pointerEvents="none" style={styles.intro}>
+            {/* "Hold me!" Tooltip floating above the + button */}
+            <Animated.View
+                style={[
+                    styles.tooltipWrap,
+                    {
+                        opacity: tooltipFade,
+                        transform: [{ translateY: tooltipSlide }],
+                    },
+                ]}
+            >
+                <View style={styles.tooltipPill}>
+                    <Text style={styles.tooltipText}>{t('hold_me')}</Text>
+                </View>
+                <View style={styles.tooltipCaret} />
+            </Animated.View>
+
+            {/* Circular drawing ring */}
             <Animated.View style={[styles.introRing, { opacity: fade }]}>
                 <Animated.View
                     style={{
@@ -169,7 +201,7 @@ function FabIntro() {
                 </Animated.View>
             </Animated.View>
 
-            {/* Each ray is an upright stick above a zero-size pivot at the button centre, tilted by rotating the pivot. */}
+            {/* Three little spark rays */}
             <Animated.View style={[styles.rayPivotRoot, { opacity: fade }]}>
                 {RAYS.map((angle, i) => (
                     <View key={angle} style={[styles.rayPivot, { transform: [{ rotate: `${angle}deg` }] }]}>
@@ -178,7 +210,6 @@ function FabIntro() {
                                 styles.ray,
                                 {
                                     opacity: rays[i].interpolate({ inputRange: [0, 0.25, 1], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
-                                    // Grows outward from its base rather than from its middle.
                                     transform: [
                                         { translateY: rays[i].interpolate({ inputRange: [0, 1], outputRange: [RAY_LENGTH / 2, 0] }) },
                                         { scaleY: rays[i].interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) },
@@ -193,10 +224,6 @@ function FabIntro() {
     );
 }
 
-let hasShownOpeningAnimationThisSession = false;
-
-// The yellow + button. A tap opens the normal add screen. Holding fans out Spend (left), Earn (up) and
-// Lend (right); sliding onto one and letting go opens it, and letting go anywhere else cancels.
 function AddButton({ progress, onOpenChange }: { progress: Animated.Value; onOpenChange: (open: boolean) => void }) {
     const [open, setOpen] = useState(false);
     const [hover, setHover] = useState<QuickKey | null>(null);
@@ -241,28 +268,6 @@ function AddButton({ progress, onOpenChange }: { progress: Animated.Value; onOpe
             router.push('/add');
         }
     };
-
-    // Demonstrate the 3 functionality animation once after 5s of opening the app
-    useEffect(() => {
-        if (hasShownOpeningAnimationThisSession) return;
-        hasShownOpeningAnimationThisSession = true;
-
-        const autoTimer = setTimeout(() => {
-            if (g.open) return;
-            buzz('open');
-            setMenu(true);
-            progress.setValue(0);
-            Animated.spring(progress, { toValue: 1, friction: 7, tension: 90, useNativeDriver: true }).start(() => {
-                setTimeout(() => {
-                    if (g.open && !g.moved && !g.hover) {
-                        close();
-                    }
-                }, 2200);
-            });
-        }, 5000);
-
-        return () => clearTimeout(autoTimer);
-    }, []);
 
     const responder = useRef(
         PanResponder.create({
@@ -430,6 +435,39 @@ const styles = StyleSheet.create({
     },
     addActive: { backgroundColor: colors.lemonDeep, transform: [{ scale: 1.08 }] },
     intro: { position: 'absolute', left: 0, top: 0, width: BUTTON, height: BUTTON },
+    tooltipWrap: {
+        position: 'absolute',
+        top: -46,
+        left: -20,
+        right: -20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 99,
+    },
+    tooltipPill: {
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        borderRadius: 14,
+        backgroundColor: colors.ink,
+        ...shadow.card,
+    },
+    tooltipText: {
+        fontFamily: fonts.bold,
+        fontSize: 12,
+        color: colors.white,
+        letterSpacing: 0.3,
+    },
+    tooltipCaret: {
+        width: 0,
+        height: 0,
+        borderLeftWidth: 5,
+        borderRightWidth: 5,
+        borderTopWidth: 5,
+        borderLeftColor: 'transparent',
+        borderRightColor: 'transparent',
+        borderTopColor: colors.ink,
+        marginTop: -1,
+    },
     introRing: { position: 'absolute', left: BUTTON / 2 - RING_SIZE / 2, top: BUTTON / 2 - RING_SIZE / 2, width: RING_SIZE, height: RING_SIZE },
     rayPivotRoot: { position: 'absolute', left: BUTTON / 2, top: BUTTON / 2, width: 0, height: 0 },
     rayPivot: { position: 'absolute', left: 0, top: 0, width: 0, height: 0 },

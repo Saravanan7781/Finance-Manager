@@ -13,9 +13,11 @@ import { useAsync } from '@/hooks/useAsync';
 import { api } from '@/lib/api';
 import { getCategory, normalizeCategory } from '@/lib/categories';
 import { money, monthBounds, monthKey, monthLabel, shiftMonth, tzOffset } from '@/lib/format';
+import { useTranslation } from '@/lib/i18n';
 import type { SummaryScope, Tx } from '@/lib/types';
 
 export default function Insights() {
+    const { t, translateCategory } = useTranslation();
     const familyId = useFamilyId();
     const { width, height } = useWindowDimensions();
     const insets = useSafeAreaInsets();
@@ -110,14 +112,14 @@ export default function Insights() {
                 <IconButton Icon={ChevronLeft} tone="onDark" label="Previous month" onPress={() => setMonth(shiftMonth(month, -1))} />
                 <View style={{ alignItems: 'center' }}>
                     <T variant="heading" color={colors.white}>{monthLabel(month)}</T>
-                    <T variant="tiny" color="rgba(255,255,255,0.65)">{mine ? 'WHERE YOUR MONEY WENT' : 'WHERE THE MONEY WENT'}</T>
+                    <T variant="tiny" color="rgba(255,255,255,0.65)">{mine ? t('where_your_money_went') : t('where_money_went')}</T>
                 </View>
                 <IconButton Icon={ChevronRight} tone="onDark" label="Next month" disabled={isCurrent} onPress={() => setMonth(shiftMonth(month, 1))} />
             </View>
 
             <View style={styles.scopeRow}>
-                <Chip dark label="Just me" Icon={User} active={mine} onPress={() => setScope('me')} />
-                <Chip dark label="Family" Icon={Users} active={!mine} onPress={() => setScope('family')} />
+                <Chip dark label={t('just_me')} Icon={User} active={mine} onPress={() => setScope('me')} />
+                <Chip dark label={t('tab_family')} Icon={Users} active={!mine} onPress={() => setScope('family')} />
             </View>
 
             <View style={{ paddingHorizontal: space.lg }}>
@@ -128,7 +130,7 @@ export default function Insights() {
                 {loading && !summary ? <BubbleGhosts width={chartWidth} /> : null}
                 {summary && summary.byCategory.length === 0 ? (
                     <View style={{ paddingHorizontal: space.xl }}>
-                        <T variant="heading" color={colors.white} style={{ textAlign: 'center' }}>{mine ? 'You have no spending' : 'No spending'} in {monthLabel(month)}</T>
+                        <T variant="heading" color={colors.white} style={{ textAlign: 'center' }}>{t('nothing_spent_period')}</T>
                         <T variant="small" color="rgba(255,255,255,0.7)" style={{ textAlign: 'center', marginTop: 4 }}>Add an expense and it shows up here.</T>
                     </View>
                 ) : null}
@@ -139,8 +141,8 @@ export default function Insights() {
 
             <View style={styles.sheet}>
                 <View style={styles.sheetTop}>
-                    <T variant="title" style={{ fontSize: 22 }}>{mine ? 'Your expenses' : 'Expenses'}</T>
-                    <T variant="small" color={colors.muted} style={{ fontFamily: fonts.semibold }} onPress={() => openTransactions()} accessibilityRole="link">View All</T>
+                    <T variant="title" style={{ fontSize: 22 }}>{mine ? t('your_expenses') : t('expenses')}</T>
+                    <T variant="small" color={colors.muted} style={{ fontFamily: fonts.semibold }} onPress={() => openTransactions()} accessibilityRole="link">{t('view_all')}</T>
                 </View>
 
                 {summary ? (
@@ -161,8 +163,8 @@ export default function Insights() {
                 <View style={styles.statRow}>
                     {summary ? (
                         <>
-                            <Stat label="Income" value={money(summary.income)} tint={colors.income} />
-                            <Stat label="Net" value={`${summary.net < 0 ? '-' : ''}${money(Math.abs(summary.net))}`} tint={summary.net < 0 ? colors.expense : colors.ink} />
+                            <Stat label={t('income')} value={money(summary.income)} tint={colors.income} />
+                            <Stat label={t('net')} value={`${summary.net < 0 ? '-' : ''}${money(Math.abs(summary.net))}`} tint={summary.net < 0 ? colors.expense : colors.ink} />
                         </>
                     ) : (
                         <>
@@ -174,7 +176,7 @@ export default function Insights() {
 
                 {categories.length === 0 ? null : (
                     <>
-                        <SectionHeader title="Biggest categories" />
+                        <SectionHeader title={t('biggest_categories')} />
                         <View style={styles.cards}>
                             {categories.map((c) => {
                                 const category = getCategory(c.category);
@@ -191,7 +193,7 @@ export default function Insights() {
                                         ]}
                                     >
                                         <View style={styles.catHead}>
-                                            <T variant="small" color={colors.muted} numberOfLines={1} style={{ flex: 1 }}>{c.category}</T>
+                                            <T variant="small" color={colors.muted} numberOfLines={1} style={{ flex: 1 }}>{translateCategory(c.category)}</T>
                                             <category.Icon size={17} color={category.tint} strokeWidth={2.2} />
                                         </View>
                                         <Amount value={c.total} size={22} />
@@ -216,7 +218,7 @@ export default function Insights() {
 
                 {summary && !mine && summary.byMember.length > 1 ? (
                     <>
-                        <SectionHeader title="Who spent" />
+                        <SectionHeader title={t('who_spent')} />
                         {summary.byMember.map((m) => (
                             <View key={m.userId} style={{ marginBottom: 10 }}>
                                 <View style={styles.memberRow}>
@@ -229,7 +231,7 @@ export default function Insights() {
                     </>
                 ) : null}
 
-                {summary && summary.transactionCount === 0 ? <Empty title="A quiet month" /> : null}
+                {summary && summary.transactionCount === 0 ? <Empty title={t('a_quiet_month')} /> : null}
             </View>
 
             {/* Category Transactions Modal */}
@@ -275,7 +277,7 @@ export default function Insights() {
                         {selectedShare ? (
                             <View style={styles.modalTotalCard}>
                                 <View style={{ flex: 1 }}>
-                                    <T variant="tiny" color={colors.muted}>TOTAL SPENT</T>
+                                    <T variant="tiny" color={colors.muted}>{t('total_spent').toUpperCase()}</T>
                                     <Amount value={selectedShare.total} size={26} />
                                 </View>
                                 {selectedBudget ? (

@@ -185,17 +185,17 @@ export default function Family() {
         <Screen bottomInset={96} refreshing={refreshing} onRefresh={pullToRefresh}>
             <T variant="title" style={{ textAlign: 'center' }}>{me?.family?.name}</T>
             <T variant="small" color={colors.inkSoft} style={{ textAlign: 'center', marginBottom: space.lg }}>
-                {family?.members.length ?? me?.family?.memberCount ?? 1} members
+                {`${family?.members.length ?? me?.family?.memberCount ?? 1} ${t('members')}`}
             </T>
 
             <ErrorBanner message={error ?? loadError} onRetry={reload} />
 
             <Glass strong>
-                <T variant="tiny" color={colors.muted}>INVITE CODE</T>
+                <T variant="tiny" color={colors.muted}>{t('invite_code')}</T>
                 <T variant="display" style={{ fontSize: 34, letterSpacing: 4, marginVertical: space.sm }} selectable>{code}</T>
                 <View style={styles.rowGap}>
-                    <PillButton label={copied ? 'Copied' : 'Copy'} Icon={Copy} variant="ink" onPress={copy} style={{ flex: 1, minHeight: 46 }} />
-                    <PillButton label="Share" Icon={Share2} variant="glass" onPress={share} style={{ flex: 1, minHeight: 46 }} />
+                    <PillButton label={copied ? t('copied') : t('copy')} Icon={Copy} variant="ink" onPress={copy} style={{ flex: 1, minHeight: 46 }} />
+                    <PillButton label={t('share')} Icon={Share2} variant="glass" onPress={share} style={{ flex: 1, minHeight: 46 }} />
                 </View>
                 {isAdmin ? (
                     <Pressable
@@ -211,7 +211,7 @@ export default function Family() {
                         }}
                     >
                         <RefreshCw size={14} color={colors.muted} />
-                        <T variant="small" color={colors.muted}>Generate a new code</T>
+                        <T variant="small" color={colors.muted}>{t('generate_new_code')}</T>
                     </Pressable>
                 ) : null}
             </Glass>
@@ -226,13 +226,13 @@ export default function Family() {
                 </Pressable>
             ) : null}
 
-            <SectionHeader title="Plan together" />
+            <SectionHeader title={t('plan_together')} />
             <Glass style={{ paddingVertical: 4 }}>
-                <NavRow Icon={Target} label="Goals" hint="Save for what matters" onPress={() => router.push('/goals')} />
-                <NavRow Icon={HandCoins} label="Loans" hint="Money lent and borrowed" onPress={() => router.push('/loans')} />
-                <NavRow Icon={PiggyBank} label="Budgets" hint="Monthly limits by category" onPress={() => router.push('/budgets')} />
-                <NavRow Icon={Repeat} label="Recurring Bills" hint="Rent, bills, subscriptions" onPress={() => router.push('/recurring')} />
-                <NavRow Icon={Tag} label="Custom Categories" hint="Personalize transaction categories" onPress={() => setCategorySheet(true)} />
+                <NavRow Icon={Target} label={t('goals')} hint={t('goals_hint')} onPress={() => router.push('/goals')} />
+                <NavRow Icon={HandCoins} label={t('loans')} hint={t('loans_hint')} onPress={() => router.push('/loans')} />
+                <NavRow Icon={PiggyBank} label={t('budgets')} hint={t('budgets_hint')} onPress={() => router.push('/budgets')} />
+                <NavRow Icon={Repeat} label={t('recurring_bills')} hint={t('recurring_hint')} onPress={() => router.push('/recurring')} />
+                <NavRow Icon={Tag} label={t('custom_categories')} hint={t('custom_hint')} onPress={() => setCategorySheet(true)} />
                 <NavRow
                     Icon={Download}
                     label="Export to CSV"
@@ -257,14 +257,14 @@ export default function Family() {
                 />
             </Glass>
 
-            <SectionHeader title="Members" />
+            <SectionHeader title={t('members')} />
             <Glass style={{ paddingVertical: 8 }}>
                 {(family?.members ?? []).map((member, i, all) => (
                     <View key={member.uid} style={[styles.member, i < all.length - 1 && styles.memberLine]}>
                         <Avatar name={member.displayName} size={42} />
                         <View style={{ flex: 1 }}>
                             <T variant="body" style={{ fontFamily: fonts.bold }}>
-                                {member.displayName}{member.uid === me?.uid ? ' (you)' : ''}
+                                {member.displayName}{member.uid === me?.uid ? ` (${t('you')})` : ''}
                             </T>
                             <T variant="small" color={colors.muted}>{member.role === 'admin' ? 'Admin' : 'Member'}</T>
                         </View>
@@ -306,9 +306,9 @@ export default function Family() {
                 ))}
             </Glass>
 
-            <SectionHeader title="You" />
+            <SectionHeader title={t('you')} />
             <Glass style={{ paddingVertical: 4 }}>
-                <NavRow Icon={Target} label="Your name" hint={me?.displayName} onPress={() => { setName(me?.displayName ?? ''); setRenaming(true); }} />
+                <NavRow Icon={Target} label={t('your_name')} hint={me?.displayName} onPress={() => { setName(me?.displayName ?? ''); setRenaming(true); }} />
                 {isAdmin ? (
                     <NavRow
                         Icon={Users}
@@ -320,7 +320,7 @@ export default function Family() {
                         }}
                     />
                 ) : null}
-                <NavRow Icon={Palette} label="Color theme" hint={paletteName} onPress={() => setPicking(true)} />
+                <NavRow Icon={Palette} label={t('color_theme')} hint={paletteName} onPress={() => setPicking(true)} />
                 <NavRow Icon={Languages} label={t('language')} hint={lang === 'en' ? 'English' : 'தமிழ் (Tamil)'} onPress={() => setLanguage(lang === 'en' ? 'ta' : 'en')} />
                 {remindersSupported ? (
                     <View style={styles.navRow}>
@@ -336,7 +336,7 @@ export default function Family() {
 
             <View style={{ gap: 10, marginTop: space.xl }}>
                 <PillButton
-                    label={isAdmin && (family?.members.length ?? 1) > 1 ? 'Leave (hand over admin first)' : 'Leave family'}
+                    label={isAdmin && (family?.members.length ?? 1) > 1 ? 'Leave (hand over admin first)' : t('leave_family')}
                     Icon={LogOut}
                     variant="danger"
                     onPress={async () => {
@@ -348,7 +348,7 @@ export default function Family() {
                         }
                     }}
                 />
-                <PillButton label="Sign out" variant="glass" onPress={signOut} />
+                <PillButton label={t('sign_out')} variant="glass" onPress={signOut} />
             </View>
 
             <Sheet visible={renamingFamily} onClose={() => setRenamingFamily(false)} title="Family name">

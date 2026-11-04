@@ -213,7 +213,7 @@ export default function Activity() {
                             <DonutChart key={pieRange} slices={slices} total={pieTotal} label={{ day: t('range_today'), week: t('range_1week'), month: t('range_current_month'), year: t('range_that_year') }[pieRange]} selected={category} onSelect={pickFromPie} />
                             <View style={styles.legend}>
                                 {slices.length === 0 ? (
-                                    <T variant="small" color={colors.muted}>Nothing spent in this period.</T>
+                                    <T variant="small" color={colors.muted}>{t('nothing_spent_period')}</T>
                                 ) : (
                                     slices.map((slice) => {
                                         const selected = category === slice.category;
@@ -259,8 +259,8 @@ export default function Activity() {
             {/* Buttons that open a sheet showing every option at once, instead of a row you have to slide through. */}
             <View style={styles.filterRow}>
                 <FilterButton label={t('category')} value={category ? translateCategory(category) : null} Icon={category ? getCategory(category).Icon : undefined} onPress={() => setSheet('category')} onClear={() => setCategory(null)} />
-                <FilterButton label="Month" value={month ? monthLabel(month, true) : null} onPress={() => setSheet('month')} onClear={() => setMonth(null)} />
-                {mine ? <FilterButton label="Just me" value="Just me" onPress={() => setMine(false)} onClear={() => setMine(false)} /> : null}
+                <FilterButton label={t('range_month')} value={month ? monthLabel(month, true) : null} onPress={() => setSheet('month')} onClear={() => setMonth(null)} />
+                {mine ? <FilterButton label={t('just_me')} value={t('just_me')} onPress={() => setMine(false)} onClear={() => setMine(false)} /> : null}
             </View>
 
             <Glass strong style={styles.stats}>
@@ -305,10 +305,10 @@ export default function Activity() {
                 <View>
                     <Empty
                         Icon={ReceiptText}
-                        title={filtering ? 'Nothing matches' : 'No transactions here'}
-                        hint={filtering ? 'Try a different search, category or month.' : 'Add one with the yellow + button.'}
+                        title={filtering ? t('nothing_matches') : t('no_transactions_here')}
+                        hint={filtering ? t('try_different_search') : t('add_one_with_plus')}
                     />
-                    {filtering ? <PillButton label="Clear filters" variant="glass" onPress={clearFilters} style={{ alignSelf: 'center' }} /> : null}
+                    {filtering ? <PillButton label={t('clear_filters')} variant="glass" onPress={clearFilters} style={{ alignSelf: 'center' }} /> : null}
                 </View>
             ) : null}
 
@@ -354,7 +354,7 @@ export default function Activity() {
             ))}
 
             {data && data.length >= pageSize && !exhausted ? (
-                <PillButton label="Load older" variant="glass" loading={loadingMore} onPress={loadMore} style={{ marginTop: space.xl }} />
+                <PillButton label={t('load_older')} variant="glass" loading={loadingMore} onPress={loadMore} style={{ marginTop: space.xl }} />
             ) : null}
             {filteredHere && loaded.length > 0 && items.length > 0 ? (
                 <T variant="tiny" color={colors.faint} style={{ textAlign: 'center', marginTop: space.lg }}>
@@ -362,9 +362,9 @@ export default function Activity() {
                 </T>
             ) : null}
 
-            <Sheet visible={sheet === 'category'} onClose={() => setSheet(null)} title="Category">
+            <Sheet visible={sheet === 'category'} onClose={() => setSheet(null)} title={t('category')}>
                 <View style={styles.sheetGrid}>
-                    <Chip label="All categories" active={!category} onPress={() => { setCategory(null); setSheet(null); }} />
+                    <Chip label={t('all_categories')} active={!category} onPress={() => { setCategory(null); setSheet(null); }} />
                     {categoryOptions.map((option) => (
                         <Chip
                             key={option.name}
@@ -380,9 +380,9 @@ export default function Activity() {
                 </View>
             </Sheet>
 
-            <Sheet visible={sheet === 'month'} onClose={() => setSheet(null)} title="Month">
+            <Sheet visible={sheet === 'month'} onClose={() => setSheet(null)} title={t('range_month')}>
                 <View style={styles.sheetGrid}>
-                    <Chip label="All time" active={!month} onPress={() => { setMonth(null); setSheet(null); }} />
+                    <Chip label={t('all_time')} active={!month} onPress={() => { setMonth(null); setSheet(null); }} />
                     {monthOptions.map((key) => (
                         <Chip
                             key={key}

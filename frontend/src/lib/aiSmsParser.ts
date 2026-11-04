@@ -260,31 +260,52 @@ async function callAiApi(
 
     // 2. If Gemini and OpenAI-compatible failed or was not parsed, try Gemini native generateContent
     if (!rawJsonContent && config.provider === 'gemini') {
-        const nativeUrl = `https://generativelanguage.googleapis.com/v1beta/models/${config.model || 'gemini-1.5-flash'}:generateContent?key=${config.apiKey}`;
-        const nativeResp = await fetch(nativeUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [
-                    {
-                        role: 'user',
-                        parts: [{ text: `${SYSTEM_PROMPT}\n\nInput transactions to process:\n${userPrompt}` }],
-                    },
-                ],
-                generationConfig: {
-                    responseMimeType: 'application/json',
-                    temperature: 0.1,
-                },
-            }),
-        });
+        const configured = config.model || 'gemini-1.5-flash';
+        const candidateModels = [
+            configured,
+            configured.toLowerCase().replace(/\s+/g, '-'),
+            'gemini-1.5-flash',
+            'gemini-2.0-flash',
+        ];
+        const uniqueModels = Array.from(new Set(candidateModels));
+        let lastErrorText = '';
 
-        if (!nativeResp.ok) {
-            const errBody = await nativeResp.text().catch(() => '');
-            throw new Error(`Gemini API error (${nativeResp.status}): ${errBody.slice(0, 160)}`);
+        for (const m of uniqueModels) {
+            try {
+                const nativeUrl = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${config.apiKey}`;
+                const nativeResp = await fetch(nativeUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [
+                            {
+                                role: 'user',
+                                parts: [{ text: `${SYSTEM_PROMPT}\n\nInput transactions to process:\n${userPrompt}` }],
+                            },
+                        ],
+                        generationConfig: {
+                            responseMimeType: 'application/json',
+                            temperature: 0.1,
+                        },
+                    }),
+                });
+
+                if (nativeResp.ok) {
+                    const nativeData = await nativeResp.json();
+                    rawJsonContent = nativeData.candidates?.[0]?.content?.parts?.[0]?.text || null;
+                    if (rawJsonContent) break;
+                } else {
+                    const errBody = await nativeResp.text().catch(() => '');
+                    lastErrorText = `(${nativeResp.status}): ${errBody.slice(0, 160)}`;
+                }
+            } catch (fetchErr: any) {
+                lastErrorText = fetchErr?.message || '';
+            }
         }
 
-        const nativeData = await nativeResp.json();
-        rawJsonContent = nativeData.candidates?.[0]?.content?.parts?.[0]?.text || null;
+        if (!rawJsonContent && lastErrorText) {
+            throw new Error(`Gemini API error ${lastErrorText}`);
+        }
     }
 
     if (!rawJsonContent) {

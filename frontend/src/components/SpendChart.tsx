@@ -3,15 +3,16 @@ import { Animated, Easing, Pressable, StyleSheet, View } from 'react-native';
 import { colors, fonts, radius, space } from '@/constants/theme';
 import { bucketLabel, moneyShort } from '@/lib/format';
 import type { TrendBucket, TrendRange } from '@/lib/types';
+import { useTranslation, type TranslationKey } from '@/lib/i18n';
 import { Glass, Skeleton, T, useCountUp } from './ui';
 
 const BAR_AREA = 118;
 
-const RANGES: { value: TrendRange; label: string; period: string; unit: string }[] = [
-    { value: 'day', label: 'Days', period: 'Last 7 days', unit: 'DAY' },
-    { value: 'week', label: 'Weeks', period: 'Last 8 weeks', unit: 'WEEK' },
-    { value: 'month', label: 'Months', period: 'Last 6 months', unit: 'MONTH' },
-    { value: 'year', label: 'Years', period: 'Last 12 months', unit: 'YEAR' },
+const RANGES: { value: TrendRange; labelKey: TranslationKey; period: string; unit: string }[] = [
+    { value: 'day', labelKey: 'range_day', period: 'Last 7 days', unit: 'DAY' },
+    { value: 'week', labelKey: 'range_week', period: 'Last 8 weeks', unit: 'WEEK' },
+    { value: 'month', labelKey: 'range_month', period: 'Last 6 months', unit: 'MONTH' },
+    { value: 'year', labelKey: 'range_year', period: 'Last 12 months', unit: 'YEAR' },
 ];
 
 function Bar({ ratio, index, tone }: { ratio: number; index: number; tone: 'selected' | 'current' | 'peak' | 'plain' }) {
@@ -87,6 +88,7 @@ export function SpendChart({
     onSelect: (index: number | null) => void;
     mine: boolean;
 }) {
+    const { t } = useTranslation();
     const config = RANGES.find((r) => r.value === range)!;
     const total = buckets.reduce((sum, b) => sum + b.expense, 0);
     const shownTotal = useCountUp(total, 'spend-total');
@@ -100,7 +102,7 @@ export function SpendChart({
         <Glass strong style={styles.card}>
             <View style={styles.head}>
                 <View style={{ flex: 1 }}>
-                    <T variant="heading">{mine ? 'Your spending' : 'Spending'}</T>
+                    <T variant="heading">{mine ? t('your_spending') : t('spending')}</T>
                     <T variant="small" color={colors.muted}>{config.period}</T>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
@@ -121,7 +123,7 @@ export function SpendChart({
                             style={[styles.rangeOption, active && styles.rangeActive]}
                         >
                             <T variant="tiny" color={active ? colors.white : colors.inkSoft} style={{ fontFamily: fonts.bold }}>
-                                {option.label.toUpperCase()}
+                                {t(option.labelKey).toUpperCase()}
                             </T>
                         </Pressable>
                     );
@@ -168,11 +170,11 @@ export function SpendChart({
 
             {total === 0 ? (
                 <T variant="small" color={colors.muted} style={{ textAlign: 'center', marginTop: space.md }}>
-                    {mine ? 'You have not spent anything' : 'Nothing spent'} in this period.
+                    {t('nothing_spent_period')}
                 </T>
             ) : (
                 <T variant="tiny" color={colors.faint} style={{ textAlign: 'center', marginTop: space.md }}>
-                    TAP A BAR TO SEE ITS TRANSACTIONS
+                    {t('tap_bar_transactions')}
                 </T>
             )}
         </Glass>
