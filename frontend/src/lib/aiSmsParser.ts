@@ -44,11 +44,14 @@ export const PROVIDER_DEFAULTS: Record<AiProvider, { name: string; apiUrl: strin
     },
 };
 
-// In-memory active configuration
+// In-memory active configuration sourced strictly from environment variables (.env)
+const getEnvKey = () => (process.env.EXPO_PUBLIC_AI_API_KEY || '').trim();
+const getEnvModel = () => (process.env.EXPO_PUBLIC_AI_MODEL || 'gemini-3.8-flash').trim();
+
 let activeConfig: AiSmsConfig = {
     provider: 'gemini',
-    apiKey: process.env.EXPO_PUBLIC_AI_API_KEY || '',
-    model: process.env.EXPO_PUBLIC_AI_MODEL || PROVIDER_DEFAULTS.gemini.model,
+    apiKey: getEnvKey(),
+    model: getEnvModel(),
     apiUrl: process.env.EXPO_PUBLIC_AI_API_URL || PROVIDER_DEFAULTS.gemini.apiUrl,
     temperature: 0.1,
 };
@@ -141,10 +144,11 @@ export const clearStoredAiConfig = async (): Promise<void> => {
 
 // Check if a real AI API key is configured
 export const isAiApiConfigured = (): boolean => {
+    const key = (process.env.EXPO_PUBLIC_AI_API_KEY || activeConfig.apiKey || '').trim();
     return Boolean(
-        activeConfig.apiKey &&
-        activeConfig.apiKey !== 'PLACEHOLDER_API_KEY' &&
-        activeConfig.apiKey.trim().length > 8
+        key &&
+        key !== 'PLACEHOLDER_API_KEY' &&
+        key.length > 5
     );
 };
 
@@ -259,20 +263,23 @@ async function callAiApi(
     }
 
     // 2. If Gemini and OpenAI-compatible failed or was not parsed, try Gemini native generateContent
-    if (!rawJsonContent && config.provider === 'gemini') {
-        const configured = config.model || 'gemini-1.5-flash';
+    if (!rawJsonContent && (config.provider === 'gemini' || config.apiKey)) {
+        const key = (process.env.EXPO_PUBLIC_AI_API_KEY || config.apiKey || '').trim();
+        const rawModel = (process.env.EXPO_PUBLIC_AI_MODEL || config.model || 'gemini-3.8-flash').trim();
         const candidateModels = [
-            configured,
-            configured.toLowerCase().replace(/\s+/g, '-'),
-            'gemini-1.5-flash',
-            'gemini-2.0-flash',
+            rawModel.toLowerCase().replace(/\s+/g, '-'),
+            'gemini-3.8-flash',
+            'gemini-3.7-flash',
+            'gemini-3.5-flash-lite',
+            'gemini-3.1-flash-lite',
+            'gemini-flash-latest',
         ];
         const uniqueModels = Array.from(new Set(candidateModels));
         let lastErrorText = '';
 
         for (const m of uniqueModels) {
             try {
-                const nativeUrl = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${config.apiKey}`;
+                const nativeUrl = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`;
                 const nativeResp = await fetch(nativeUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -288,6 +295,7 @@ async function callAiApi(
                             temperature: 0.1,
                         },
                     }),
+                    signal: AbortSignal.timeout(8000),
                 });
 
                 if (nativeResp.ok) {
@@ -304,7 +312,7 @@ async function callAiApi(
         }
 
         if (!rawJsonContent && lastErrorText) {
-            throw new Error(`Gemini API error ${lastErrorText}`);
+            console.warn(`Gemini API bulk parse error: ${lastErrorText}`);
         }
     }
 

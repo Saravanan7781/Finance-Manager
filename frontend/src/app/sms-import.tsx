@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { KeyRound,
+import {
     AlertTriangle,
     ArrowDownLeft,
     ArrowUpRight,
@@ -48,7 +48,6 @@ import { money, timeAgo } from '@/lib/format';
 import { ParsedSms } from '@/lib/sms';
 import { scanSmsInbox } from '@/lib/smsReader';
 import { aiExtractBulkSms, getAiConfig, isAiApiConfigured, subscribeAiConfig, type AiSmsConfig } from '@/lib/aiSmsParser';
-import { AiSettingsSheet } from '@/components/AiSettingsSheet';
 import type { CustomCategory, Tx } from '@/lib/types';
 
 export type SmsPeriodFilter = 'today' | 'week' | 'month' | 'all';
@@ -85,7 +84,6 @@ export default function SmsImport() {
     const [categorySheetItem, setCategorySheetItem] = useState<ImportItem | null>(null);
     const [typeFilter, setTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
     const [isNativeScanner, setIsNativeScanner] = useState(true);
-    const [aiSheet, setAiSheet] = useState(false);
     const [aiConfig, setAiConfig] = useState<AiSmsConfig>(getAiConfig());
     const [aiConfigured, setAiConfigured] = useState(isAiApiConfigured());
 
@@ -217,7 +215,7 @@ export default function SmsImport() {
 
     const runAiCategorization = async () => {
         if (!isAiApiConfigured()) {
-            setAiSheet(true);
+            setError('AI is not configured. Please check your environment variables.');
             return;
         }
         if (items.length === 0 || aiAnalyzing) return;
@@ -418,13 +416,6 @@ export default function SmsImport() {
                             disabled={loading || saving || deletingAll || aiAnalyzing}
                         />
                         <IconButton
-                            Icon={KeyRound}
-                            label="AI Settings"
-                            tone="glass"
-                            onPress={() => setAiSheet(true)}
-                            disabled={loading || saving || deletingAll || aiAnalyzing}
-                        />
-                        <IconButton
                             Icon={Trash2}
                             label="Delete all SMS transactions"
                             tone="glass"
@@ -477,34 +468,7 @@ export default function SmsImport() {
                 </ScrollView>
             </View>
 
-            {/* AI Status / Quick Config Bar */}
-            <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Configure AI Key"
-                onPress={() => setAiSheet(true)}
-                style={({ pressed }) => [
-                    styles.aiStatusBar,
-                    aiConfigured ? styles.aiStatusBarActive : styles.aiStatusBarInactive,
-                    pressed && { opacity: 0.8 },
-                ]}
-            >
-                <Sparkles size={14} color={aiConfigured ? colors.income : colors.inkSoft} />
-                <T
-                    variant="tiny"
-                    style={{
-                        fontFamily: fonts.semibold,
-                        color: aiConfigured ? colors.income : colors.inkSoft,
-                        flex: 1,
-                    }}
-                >
-                    {aiConfigured
-                        ? `AI Active: ${aiConfig.provider.toUpperCase()} (${aiConfig.model}) • Tap to edit`
-                        : 'Setup AI Key (Gemini/OpenAI) for higher accuracy • Tap to configure'}
-                </T>
-                <T variant="tiny" style={{ fontFamily: fonts.bold, color: colors.ink }}>
-                    {aiConfigured ? 'EDIT' : 'SETUP'}
-                </T>
-            </Pressable>
+            
 
             <View style={{ flex: 1 }}>
                 {/* Undo Notification Banner */}
@@ -903,7 +867,6 @@ export default function SmsImport() {
                     </View>
                 </View>
             </Sheet>
-            <AiSettingsSheet visible={aiSheet} onClose={() => setAiSheet(false)} onSaved={() => setAiConfigured(isAiApiConfigured())} />
         </Screen>
     );
 }

@@ -171,19 +171,22 @@ ${JSON.stringify(contextPayload, null, 2)}`;
         } catch {}
 
         // 2. If Gemini and OpenAI format failed, try Gemini native generateContent
-        if (!botReply && config.provider === 'gemini') {
-            const configured = config.model || 'gemini-1.5-flash';
+        if (!botReply && (config.provider === 'gemini' || config.apiKey)) {
+            const key = (process.env.EXPO_PUBLIC_AI_API_KEY || config.apiKey || '').trim();
+            const rawModel = (process.env.EXPO_PUBLIC_AI_MODEL || config.model || 'gemini-3.8-flash').trim();
             const candidateModels = [
-                configured,
-                configured.toLowerCase().replace(/\s+/g, '-'),
-                'gemini-1.5-flash',
-                'gemini-2.0-flash',
+                rawModel.toLowerCase().replace(/\s+/g, '-'),
+                'gemini-3.8-flash',
+                'gemini-3.7-flash',
+                'gemini-3.5-flash-lite',
+                'gemini-3.1-flash-lite',
+                'gemini-flash-latest',
             ];
             const uniqueModels = Array.from(new Set(candidateModels));
 
             for (const m of uniqueModels) {
                 try {
-                    const nativeUrl = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${config.apiKey}`;
+                    const nativeUrl = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`;
                     const nativeResp = await fetch(nativeUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -198,6 +201,7 @@ ${JSON.stringify(contextPayload, null, 2)}`;
                                 temperature: 0.3,
                             },
                         }),
+                        signal: AbortSignal.timeout(8000),
                     });
                     if (nativeResp.ok) {
                         const nativeData = await nativeResp.json();

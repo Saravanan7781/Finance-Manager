@@ -14,7 +14,6 @@ import { useTranslation } from '@/lib/i18n';
 import { restartApp } from '@/lib/restart';
 import { remindersEnabled, remindersSupported, setRemindersEnabled } from '@/lib/notifications';
 import type { TxType } from '@/lib/types';
-import { AiSettingsSheet } from '@/components/AiSettingsSheet';
 import { getAiConfig, isAiApiConfigured, subscribeAiConfig, type AiSmsConfig } from '@/lib/aiSmsParser';
 
 const CATEGORY_TINTS = [
@@ -60,7 +59,6 @@ export default function Family() {
     const [exportBusy, setExportBusy] = useState(false);
     const [exportSuccess, setExportSuccess] = useState<string | null>(null);
     const [exportError, setExportError] = useState<string | null>(null);
-    const [aiSheet, setAiSheet] = useState(false);
     const [aiConfig, setAiConfig] = useState<AiSmsConfig>(getAiConfig());
     const [aiConfigured, setAiConfigured] = useState(isAiApiConfigured());
 
@@ -246,15 +244,9 @@ export default function Family() {
                         label="Extract from SMS"
                         hint="Scan messages & import bank transactions"
                         onPress={() => router.push('/sms-import')}
+                        last
                     />
                 )}
-                <NavRow
-                    Icon={Sparkles}
-                    label="AI API Key"
-                    hint={aiConfigured ? `${aiConfig.provider.toUpperCase()} (${aiConfig.model})` : 'Set Gemini / OpenAI Key'}
-                    onPress={() => setAiSheet(true)}
-                    last
-                />
             </Glass>
 
             <SectionHeader title={t('members')} />
@@ -566,7 +558,6 @@ export default function Family() {
                     />
                 </View>
             </Sheet>
-            <AiSettingsSheet visible={aiSheet} onClose={() => setAiSheet(false)} onSaved={() => setAiConfigured(isAiApiConfigured())} />
         </Screen>
     );
 }

@@ -15,7 +15,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Header } from '@/components/Header';
-import { AiSettingsSheet } from '@/components/AiSettingsSheet';
 import { ErrorBanner, IconButton, Loading, Screen, T } from '@/components/ui';
 import { colors, fonts, radius, space } from '@/constants/theme';
 import { useFamilyId } from '@/context/auth';
@@ -56,7 +55,6 @@ export default function Ask() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [draft, setDraft] = useState('');
     const [isTyping, setIsTyping] = useState(false);
-    const [aiSheet, setAiSheet] = useState(false);
 
     const { data, loading, error, reload } = useAsync(async () => {
         const [summary, loans, goals, budgets] = await Promise.all([
@@ -104,14 +102,6 @@ export default function Ask() {
                     close
                     dark
                     title={t('ask_title') || 'Ask AI'}
-                    right={
-                        <IconButton
-                            Icon={KeyRound}
-                            label="AI API Key"
-                            tone="onDark"
-                            onPress={() => setAiSheet(true)}
-                        />
-                    }
                 />
             </View>
 
@@ -130,19 +120,11 @@ export default function Ask() {
                         <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: space.xl }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                                 <Sparkles size={20} color={colors.ember3} />
-                                {aiActive ? (
-                                    <View style={styles.aiBadge}>
-                                        <T variant="tiny" style={{ color: colors.lemon, fontFamily: fonts.bold }}>
-                                            AI READY
-                                        </T>
-                                    </View>
-                                ) : (
-                                    <Pressable onPress={() => setAiSheet(true)} style={styles.aiBadgeSetup}>
-                                        <T variant="tiny" style={{ color: 'rgba(255,255,255,0.7)', fontFamily: fonts.medium }}>
-                                            Connect AI Key →
-                                        </T>
-                                    </Pressable>
-                                )}
+                                <View style={styles.aiBadge}>
+                                    <T variant="tiny" style={{ color: colors.lemon, fontFamily: fonts.bold }}>
+                                        AI ASSISTANT
+                                    </T>
+                                </View>
                             </View>
                             <T variant="display" color={colors.white} style={{ marginTop: space.md, marginBottom: space.sm }}>
                                 {t('what_to_know') || 'What do you want to know?'}
@@ -231,7 +213,7 @@ export default function Ask() {
                 </View>
             </KeyboardAvoidingView>
 
-            <AiSettingsSheet visible={aiSheet} onClose={() => setAiSheet(false)} />
+            
         </Screen>
     );
 }
