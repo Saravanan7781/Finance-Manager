@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import {
+import { KeyRound,
     AlertTriangle,
     ArrowDownLeft,
     ArrowUpRight,
@@ -47,7 +47,8 @@ import { confirmAction } from '@/lib/dialog';
 import { money, timeAgo } from '@/lib/format';
 import { ParsedSms } from '@/lib/sms';
 import { scanSmsInbox } from '@/lib/smsReader';
-import { aiExtractBulkSms } from '@/lib/aiSmsParser';
+import { aiExtractBulkSms, getAiConfig, isAiApiConfigured, subscribeAiConfig, type AiSmsConfig } from '@/lib/aiSmsParser';
+import { AiSettingsSheet } from '@/components/AiSettingsSheet';
 import type { CustomCategory, Tx } from '@/lib/types';
 
 export type SmsPeriodFilter = 'today' | 'week' | 'month' | 'all';
@@ -84,6 +85,16 @@ export default function SmsImport() {
     const [categorySheetItem, setCategorySheetItem] = useState<ImportItem | null>(null);
     const [typeFilter, setTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
     const [isNativeScanner, setIsNativeScanner] = useState(true);
+    const [aiSheet, setAiSheet] = useState(false);
+    const [aiConfig, setAiConfig] = useState<AiSmsConfig>(getAiConfig());
+    const [aiConfigured, setAiConfigured] = useState(isAiApiConfigured());
+
+    useEffect(() => {
+        return subscribeAiConfig((cfg) => {
+            setAiConfig(cfg);
+            setAiConfigured(isAiApiConfigured());
+        });
+    }, []);
 
     const getSinceTimestamp = (p: SmsPeriodFilter): number | undefined => {
         const now = new Date();
@@ -138,7 +149,7 @@ export default function SmsImport() {
                 body: tx.rawBody || '',
                 date: tx.date ? new Date(tx.date).getTime() : undefined,
             }));
-            const aiEnhanced = await aiExtractBulkSms(rawMessages);
+            const { parsed: aiEnhanced } = await aiExtractBulkSms(rawMessages);
             const enhancedMap = new Map(aiEnhanced.map((e) => [e.dedupeKey, e]));
 
             const mapped: ImportItem[] = scanResult.transactions.map((tx, idx) => {
@@ -205,6 +216,10 @@ export default function SmsImport() {
     };
 
     const runAiCategorization = async () => {
+        if (!isAiApiConfigured()) {
+            setAiSheet(true);
+            return;
+        }
         if (items.length === 0 || aiAnalyzing) return;
         setAiAnalyzing(true);
         setError(null);
@@ -214,7 +229,10 @@ export default function SmsImport() {
                 body: it.rawBody || `${it.merchant || ''} ${it.category} ${it.amount}`,
                 date: it.date ? new Date(it.date).getTime() : undefined,
             }));
-            const aiResults = await aiExtractBulkSms(rawMessages);
+            const { parsed: aiResults, usedAi, aiError } = await aiExtractBulkSms(rawMessages);
+            if (aiError) {
+                setError(`AI API Notice: ${aiError} (categorized using smart local parser)`);
+            }
             const resultMap = new Map(aiResults.map((r) => [r.dedupeKey, r]));
 
             let updatedCount = 0;
@@ -239,13 +257,13 @@ export default function SmsImport() {
 
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
             setSuccess(
-                salaryDetected > 0
-                    ? `AI categorized ${updatedCount} transactions & flagged ${salaryDetected} salary as Next Month!`
-                    : `AI parsed and categorized ${updatedCount} transactions!`
+                usedAi
+                    ? `AI (${aiConfig.provider.toUpperCase()}) categorized ${updatedCount} transactions!`
+                    : `Categorized ${updatedCount} transactions using smart local parser!`
             );
             setTimeout(() => setSuccess(null), 4000);
-        } catch {
-            setError('AI categorization completed with local heuristics.');
+        } catch (err) {
+            setError((err as Error).message || 'AI categorization completed with local heuristics.');
         } finally {
             setAiAnalyzing(false);
         }
@@ -395,8 +413,15 @@ export default function SmsImport() {
                         <IconButton
                             Icon={Sparkles}
                             label="AI Categorize"
-                            tone="glass"
+                            tone={aiConfigured ? "ink" : "glass"}
                             onPress={runAiCategorization}
+                            disabled={loading || saving || deletingAll || aiAnalyzing}
+                        />
+                        <IconButton
+                            Icon={KeyRound}
+                            label="AI Settings"
+                            tone="glass"
+                            onPress={() => setAiSheet(true)}
                             disabled={loading || saving || deletingAll || aiAnalyzing}
                         />
                         <IconButton
@@ -451,6 +476,35 @@ export default function SmsImport() {
                     })}
                 </ScrollView>
             </View>
+
+            {/* AI Status / Quick Config Bar */}
+            <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Configure AI Key"
+                onPress={() => setAiSheet(true)}
+                style={({ pressed }) => [
+                    styles.aiStatusBar,
+                    aiConfigured ? styles.aiStatusBarActive : styles.aiStatusBarInactive,
+                    pressed && { opacity: 0.8 },
+                ]}
+            >
+                <Sparkles size={14} color={aiConfigured ? colors.income : colors.inkSoft} />
+                <T
+                    variant="tiny"
+                    style={{
+                        fontFamily: fonts.semibold,
+                        color: aiConfigured ? colors.income : colors.inkSoft,
+                        flex: 1,
+                    }}
+                >
+                    {aiConfigured
+                        ? `AI Active: ${aiConfig.provider.toUpperCase()} (${aiConfig.model}) • Tap to edit`
+                        : 'Setup AI Key (Gemini/OpenAI) for higher accuracy • Tap to configure'}
+                </T>
+                <T variant="tiny" style={{ fontFamily: fonts.bold, color: colors.ink }}>
+                    {aiConfigured ? 'EDIT' : 'SETUP'}
+                </T>
+            </Pressable>
 
             <View style={{ flex: 1 }}>
                 {/* Undo Notification Banner */}
@@ -849,6 +903,7 @@ export default function SmsImport() {
                     </View>
                 </View>
             </Sheet>
+            <AiSettingsSheet visible={aiSheet} onClose={() => setAiSheet(false)} onSaved={() => setAiConfigured(isAiApiConfigured())} />
         </Screen>
     );
 }
@@ -856,6 +911,27 @@ export default function SmsImport() {
 const styles = StyleSheet.create({
     periodBarContainer: {
         marginBottom: space.sm,
+    },
+    aiStatusBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginHorizontal: space.lg,
+        marginTop: space.xs,
+        marginBottom: space.sm,
+        paddingHorizontal: space.md,
+        paddingVertical: 8,
+        borderRadius: radius.md,
+    },
+    aiStatusBarActive: {
+        backgroundColor: 'rgba(43, 138, 95, 0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(43, 138, 95, 0.2)',
+    },
+    aiStatusBarInactive: {
+        backgroundColor: 'rgba(0, 0, 0, 0.04)',
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.06)',
     },
     periodBarScroll: {
         flexDirection: 'row',

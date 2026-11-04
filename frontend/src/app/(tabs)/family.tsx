@@ -1,6 +1,6 @@
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
-import { BellRing, Check, ChevronRight, Copy, Download, HandCoins, Languages, LogOut, MessageSquare, Palette, PiggyBank, Plus, RefreshCw, Repeat, Share2, Tag, Target, Trash2, UserCheck, UserMinus, Users } from 'lucide-react-native';
+import { BellRing, Sparkles, Check, ChevronRight, Copy, Download, HandCoins, Languages, LogOut, MessageSquare, Palette, PiggyBank, Plus, RefreshCw, Repeat, Share2, Tag, Target, Trash2, UserCheck, UserMinus, Users } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, Share, StyleSheet, Switch, View } from 'react-native';
 import { Avatar, Chip, ErrorBanner, Field, Glass, IconButton, PillButton, Screen, SectionHeader, Segmented, Sheet, SuccessBanner, T } from '@/components/ui';
@@ -14,6 +14,8 @@ import { useTranslation } from '@/lib/i18n';
 import { restartApp } from '@/lib/restart';
 import { remindersEnabled, remindersSupported, setRemindersEnabled } from '@/lib/notifications';
 import type { TxType } from '@/lib/types';
+import { AiSettingsSheet } from '@/components/AiSettingsSheet';
+import { getAiConfig, isAiApiConfigured, subscribeAiConfig, type AiSmsConfig } from '@/lib/aiSmsParser';
 
 const CATEGORY_TINTS = [
     '#2B8A5F', // Emerald
@@ -58,6 +60,16 @@ export default function Family() {
     const [exportBusy, setExportBusy] = useState(false);
     const [exportSuccess, setExportSuccess] = useState<string | null>(null);
     const [exportError, setExportError] = useState<string | null>(null);
+    const [aiSheet, setAiSheet] = useState(false);
+    const [aiConfig, setAiConfig] = useState<AiSmsConfig>(getAiConfig());
+    const [aiConfigured, setAiConfigured] = useState(isAiApiConfigured());
+
+    useEffect(() => {
+        return subscribeAiConfig((cfg) => {
+            setAiConfig(cfg);
+            setAiConfigured(isAiApiConfigured());
+        });
+    }, []);
 
     // Every colour is read once at start-up, so a new palette is saved and the app restarts to wear it.
     const choosePalette = async (id: PaletteId) => {
@@ -234,9 +246,15 @@ export default function Family() {
                         label="Extract from SMS"
                         hint="Scan messages & import bank transactions"
                         onPress={() => router.push('/sms-import')}
-                        last
                     />
                 )}
+                <NavRow
+                    Icon={Sparkles}
+                    label="AI API Key"
+                    hint={aiConfigured ? `${aiConfig.provider.toUpperCase()} (${aiConfig.model})` : 'Set Gemini / OpenAI Key'}
+                    onPress={() => setAiSheet(true)}
+                    last
+                />
             </Glass>
 
             <SectionHeader title="Members" />
@@ -548,6 +566,7 @@ export default function Family() {
                     />
                 </View>
             </Sheet>
+            <AiSettingsSheet visible={aiSheet} onClose={() => setAiSheet(false)} onSaved={() => setAiConfigured(isAiApiConfigured())} />
         </Screen>
     );
 }

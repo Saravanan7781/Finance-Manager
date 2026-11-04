@@ -20,10 +20,10 @@ export interface RawSmsMessage {
     date: number;
 }
 
-const AMOUNT = /(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/i;
-const DEBIT = /\b(debited|spent|paid|purchase|withdrawn|sent|deducted|used for)\b/i;
-const CREDIT = /\b(credited|received|deposited|refund(?:ed)?|cashback)\b/i;
-const MERCHANT = /\b(?:at|to|towards|from|by|@|info:)\s+([A-Za-z0-9][A-Za-z0-9 &._@'-]{1,38}?)(?=\s+(?:on|via|ref|upi|avl|bal|using|for|is|dated|a\/c|acct)\b|[.,;(]|\s*$)/i;
+const AMOUNT = /(?:(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)|(?:debited|credited|spent|paid|purchase|withdrawn|sent|deducted|transfer(?:red)?|received|deposited)(?:\s+(?:by|with|for|of|amounting to))?\s*(?:(?:rs\.?|inr|₹)\s*)?([\d,]+(?:\.\d{1,2})?))/i;
+const DEBIT = /\b(debited|spent|paid|purchase|withdrawn|sent|deducted|used for|transfer(?:red)? to|dr)\b/i;
+const CREDIT = /\b(credited|received|deposited|refund(?:ed)?|cashback|cr)\b/i;
+const MERCHANT = /\b(?:at|to|towards|from|by|@|info:|vpa|trf to)\s+([A-Za-z0-9][A-Za-z0-9 &._@'-]{1,38}?)(?=\s+(?:on|via|ref|upi|avl|bal|using|for|is|dated|a\/c|acct)\b|[.,;(]|\s*$)/i;
 
 // Short, stable fingerprint so pasting or scanning the same alert twice never creates two entries.
 const hash = (text: string) => {
@@ -36,24 +36,24 @@ export const suggestCategory = (text: string, merchant: string | null, type: 'in
     const combined = `${merchant || ''} ${text}`.toLowerCase();
 
     if (type === 'income') {
-        if (/salary|payroll|stipend|bonus|employer|credited for salary/i.test(combined)) return 'Salary';
-        if (/interest|dividend|fd payout|term deposit/i.test(combined)) return 'Interest';
-        if (/client|invoice|settlement|business|customer|freelance/i.test(combined)) return 'Business';
+        if (/salary|payroll|stipend|bonus|employer|credited for salary|wages|allowance/i.test(combined)) return 'Salary';
+        if (/interest|dividend|fd payout|term deposit|savings int/i.test(combined)) return 'Interest';
+        if (/client|invoice|settlement|business|customer|freelance|vendor payout/i.test(combined)) return 'Business';
         return 'Other';
     }
 
     // Expense categories
-    if (/swiggy|zomato|mcdonald|kfc|starbucks|burger|pizza|domino|biryani|chai|tea|cafe|restaurant|hotel|bakery|bake|food/i.test(combined)) return 'Food';
-    if (/zepto|blinkit|instamart|bigbasket|dmart|supermarket|grocer|reliance fresh|spencer|nature's basket|milk|vegetable/i.test(combined)) return 'Groceries';
-    if (/uber|ola|rapido|metro|irctc|redbus|flight|indigo|air india|makemytrip|cleartrip|yatra|taxi|auto|toll|fastag/i.test(combined)) return 'Travel';
-    if (/petrol|diesel|fuel|hpcl|bpcl|iocl|shell|gas station|petroleum/i.test(combined)) return 'Fuel';
-    if (/airtel|jio|vodafone|vi|electricity|bescom|tneb|cesc|mseb|water bill|gas bill|indane|hp gas|broadband|wifi|act fibernet|tata play|dish tv|recharge|postpaid/i.test(combined)) return 'Bills';
-    if (/netflix|spotify|prime|hotstar|disney|cinema|pvr|inox|bookmyshow|movie|game|sonyliv|youtube/i.test(combined)) return 'Entertainment';
-    if (/apollo|medplus|pharmeasy|netmeds|1mg|hospital|clinic|pharmacy|medicine|lab|diagnostic/i.test(combined)) return 'Health';
-    if (/myntra|ajio|zara|h&m|trends|max fashion|pantaloons|nykaa|westside|lifestyle|uniqlo|clothes|footwear/i.test(combined)) return 'Clothes and Shoes';
-    if (/rent|landlord|maintenance|housing|society dues/i.test(combined)) return 'Rent';
-    if (/school|college|tuition|coursera|udemy|exam fee|university|education/i.test(combined)) return 'Education';
-    if (/decathlon|gym|fitness|cult\.fit|cultfit|sports/i.test(combined)) return 'Sport';
+    if (/swiggy|zomato|mcdonald|kfc|starbucks|burger|pizza|domino|biryani|biriyani|chai|tea|cafe|coffee|restaurant|hotel|bakery|bakes|bake|sweets|juice|canteen|kitchen|mess|tiffin|dhaba|barbeque|shawarma|food/i.test(combined)) return 'Food';
+    if (/zepto|blinkit|instamart|bigbasket|dmart|supermarket|super market|grocer|grocery|provision|kirana|mandi|fruits|vegetable|milk|dairy|fresh|reliance fresh|spencer|nature's basket|departmental/i.test(combined)) return 'Groceries';
+    if (/uber|ola|rapido|metro|irctc|redbus|flight|indigo|air india|makemytrip|cleartrip|yatra|taxi|auto|toll|fastag|railway|train|bus ticket|travel/i.test(combined)) return 'Travel';
+    if (/petrol|diesel|fuel|hpcl|bpcl|iocl|shell|gas station|petroleum|auto fuel|bunk/i.test(combined)) return 'Fuel';
+    if (/airtel|jio|vodafone|vi\b|electricity|bescom|tneb|cesc|mseb|water bill|gas bill|indane|hp gas|bharat gas|broadband|wifi|act fibernet|tata play|dish tv|dth|recharge|postpaid/i.test(combined)) return 'Bills';
+    if (/netflix|spotify|prime|hotstar|disney|cinema|pvr|inox|bookmyshow|movie|theatre|game|steam|playstation|sonyliv|youtube/i.test(combined)) return 'Entertainment';
+    if (/apollo|medplus|pharmeasy|netmeds|1mg|hospital|clinic|pharmacy|medicine|medical|chemist|lab|diagnostic|healthcare|doctor/i.test(combined)) return 'Health';
+    if (/myntra|ajio|zara|h&m|trends|max fashion|pantaloons|nykaa|westside|lifestyle|uniqlo|clothes|footwear|textile|silks|fashions|garment|tailor|shoes/i.test(combined)) return 'Clothes and Shoes';
+    if (/rent|landlord|maintenance|housing|society dues|flat rent|pg rent/i.test(combined)) return 'Rent';
+    if (/school|college|tuition|coursera|udemy|exam fee|university|education|academy|fees/i.test(combined)) return 'Education';
+    if (/decathlon|gym|fitness|cult\.fit|cultfit|sports|badminton|turf/i.test(combined)) return 'Sport';
 
     return 'Other';
 };
@@ -63,17 +63,17 @@ export const extractMerchantFromSms = (text: string, isDebit: boolean): string |
     const cleaned = text
         .replace(/debited by\s+/gi, '')
         .replace(/credited to (?:your\s+)?(?:a\/c|account)[^.]*?\s+(?:by\s+)?/gi, (m) => (m.includes('by') ? 'by ' : ' '))
-        .replace(/(?:from|to)\s+(?:your\s+)?(?:a\/c|account|acct)[\w\s*#-]*?(?:to|towards|at|by)\s+/gi, 'to ')
+        .replace(/(?:from|to)\s+(?:your\s+)?(?:a\/c|account|acct)[\w\s*#-]*?(?:to|towards|at|by|trf to)\s+/gi, 'to ')
         .replace(/(?:from|in)\s+[\w\s]+(?:bank|a\/c|account)[\w\s*#-]*?(?:to|towards|at)\s+/gi, 'to ');
 
-    // For debits, prioritize 'to X', 'towards X', 'at X', 'vpa X'
+    // For debits, prioritize 'to X', 'towards X', 'at X', 'vpa X', 'trf to X'
     const targetRegex = isDebit
-        ? /(?:\b(?:to|towards|at|for|vpa)\s+)([a-zA-Z0-9][a-zA-Z0-9 &._@'-]{1,35}?)(?=\s+(?:on|via|ref|upi|avl|bal|using|is|dated|a\/c|acct|through)\b|[.,;(]|\s*$)/i
+        ? /(?:\b(?:to|towards|at|for|vpa|trf to)\s+)([a-zA-Z0-9][a-zA-Z0-9 &._@'-]{1,35}?)(?=\s+(?:on|via|ref|upi|avl|bal|using|is|dated|a\/c|acct|through)\b|[.,;(]|\s*$)/i
         : /(?:\b(?:by|from|towards)\s+)([a-zA-Z0-9][a-zA-Z0-9 &._@'-]{1,35}?)(?=\s+(?:on|via|ref|upi|avl|bal|using|is|dated|a\/c|acct|through)\b|[.,;(]|\s*$)/i;
 
     let match = targetRegex.exec(cleaned);
     if (!match) {
-        match = /(?:\b(?:to|towards|at|by|from)\s+)([a-zA-Z0-9][a-zA-Z0-9 &._@'-]{1,35}?)(?=\s+(?:on|via|ref|upi|avl|bal|using|is|dated|a\/c|acct)\b|[.,;(]|\s*$)/i.exec(cleaned);
+        match = /(?:\b(?:to|towards|at|by|from|trf to)\s+)([a-zA-Z0-9][a-zA-Z0-9 &._@'-]{1,35}?)(?=\s+(?:on|via|ref|upi|avl|bal|using|is|dated|a\/c|acct)\b|[.,;(]|\s*$)/i.exec(cleaned);
     }
 
     if (match) {
@@ -92,7 +92,10 @@ export const parseBankSms = (raw: string, smsDate?: number): ParsedSms | null =>
     const amountMatch = AMOUNT.exec(text);
     if (!amountMatch) return null;
 
-    const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+    const matchedStr = amountMatch[1] || amountMatch[2];
+    if (!matchedStr) return null;
+
+    const amount = parseFloat(matchedStr.replace(/,/g, ''));
     if (!(amount > 0)) return null;
 
     const isDebit = DEBIT.test(text);
