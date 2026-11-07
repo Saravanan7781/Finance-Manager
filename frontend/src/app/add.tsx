@@ -223,21 +223,6 @@ export default function AddTransaction() {
                     splitWith: splitActive && splitWith.trim() ? splitWith.trim() : null,
                 });
 
-                if (splitActive && lentAmount && lentAmount > 0) {
-                    try {
-                        await api.addLoan({
-                            familyId,
-                            direction: 'lent',
-                            person: splitWith.trim() || 'Friends',
-                            amount: lentAmount,
-                            note: `Split: ${description.trim() || category} (Total ${CURRENCY}${value.toFixed(2)})`,
-                            recordTransaction: false,
-                        });
-                    } catch (e) {
-                        console.warn('Auto-lent error:', e);
-                    }
-                }
-
                 if (keepOpen) {
                     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
                     setAmount('');

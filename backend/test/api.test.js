@@ -880,6 +880,23 @@ test('transactions: split expense persists isSplit, myShare, lentAmount, splitWi
     assert.equal(found.myShare, 100);
     assert.equal(found.lentAmount, 200);
     assert.equal(found.splitWith, 'Friends');
+    assert.ok(found.linkedLoanId);
+
+    // Verify automatic loan was created
+    const loansRes1 = await call('GET', `/api/loans/${familyId}`, { as: owner });
+    assert.equal(loansRes1.status, 200);
+    const createdLoan = loansRes1.body.find((l) => l.id === found.linkedLoanId);
+    assert.ok(createdLoan);
+    assert.equal(createdLoan.direction, 'lent');
+    assert.equal(createdLoan.amount, 200);
+    assert.equal(createdLoan.person, 'Friends');
+    assert.equal(createdLoan.isSplitLoan, true);
+
+    // Verify summary only considers myShare as expense
+    const sum1 = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10`, { as: owner });
+    assert.equal(sum1.status, 200);
+    assert.equal(sum1.body.expense, 100);
+    assert.equal(sum1.body.balance, -100);
 
     // Update split details
     const updated = await call('PUT', `/api/transactions/${splitTx.body.id}`, {
@@ -897,6 +914,41 @@ test('transactions: split expense persists isSplit, myShare, lentAmount, splitWi
     assert.equal(updatedFound.myShare, 120);
     assert.equal(updatedFound.lentAmount, 180);
     assert.equal(updatedFound.splitWith, 'Rahul');
+
+    // Verify linked loan updated
+    const loansRes2 = await call('GET', `/api/loans/${familyId}`, { as: owner });
+    const updatedLoan = loansRes2.body.find((l) => l.id === updatedFound.linkedLoanId);
+    assert.ok(updatedLoan);
+    assert.equal(updatedLoan.amount, 180);
+    assert.equal(updatedLoan.person, 'Rahul');
+
+    // Verify summary updated to myShare 120
+    const sum2 = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10`, { as: owner });
+    assert.equal(sum2.body.expense, 120);
+    assert.equal(sum2.body.balance, -120);
+
+    // Repay the split loan with recordTransaction: true
+    // Split loan repayments recover lent funds and MUST NOT create income transaction or inflate balance
+    const repayRes = await call('PUT', `/api/loans/${updatedFound.linkedLoanId}/repay`, {
+        as: owner,
+        body: { amount: 180, recordTransaction: true },
+    });
+    assert.equal(repayRes.status, 200);
+
+    // Verify loan is settled
+    const loansRes3 = await call('GET', `/api/loans/${familyId}?status=settled`, { as: owner });
+    const settledLoan = loansRes3.body.find((l) => l.id === updatedFound.linkedLoanId);
+    assert.ok(settledLoan);
+    assert.equal(settledLoan.status, 'settled');
+
+    // Verify NO income transaction was recorded
+    const afterRepayTx = await call('GET', `/api/transactions/${familyId}`, { as: owner });
+    const incomeTxs = afterRepayTx.body.filter((t) => t.type === 'income');
+    assert.equal(incomeTxs.length, 0);
+
+    // Verify family balance was NOT increased by repayment
+    const sumAfterRepay = await call('GET', `/api/transactions/${familyId}/summary?month=2026-10`, { as: owner });
+    assert.equal(sumAfterRepay.body.balance, -120);
 
     // Test single=1 and range=year for trend
     const yearTrend = await call('GET', `/api/transactions/${familyId}/trend?range=year&single=1`, { as: owner });

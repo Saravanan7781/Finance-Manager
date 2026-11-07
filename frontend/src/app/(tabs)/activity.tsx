@@ -143,14 +143,15 @@ export default function Activity() {
         [loaded, category, serverCategory, needle]
     );
 
-    const spent = items.filter((t) => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+    const spent = items.filter((t) => t.type === 'expense').reduce((sum, t) => sum + (t.isSplit && typeof t.myShare === 'number' ? t.myShare : t.amount), 0);
     const received = items.filter((t) => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
 
     const groups = useMemo(() => {
         const out: { label: string; rows: Tx[]; net: number }[] = [];
         items.forEach((tx) => {
             const label = dayLabel(tx.date);
-            const signed = tx.type === 'income' ? tx.amount : -tx.amount;
+            const effExpense = (tx.type === 'expense' && tx.isSplit && typeof tx.myShare === 'number') ? tx.myShare : tx.amount;
+            const signed = tx.type === 'income' ? tx.amount : -effExpense;
             const last = out[out.length - 1];
             if (last && last.label === label) {
                 last.rows.push(tx);

@@ -170,7 +170,14 @@ export default function Loans() {
                 <Glass strong>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
                         <View style={{ flex: 1 }}>
-                            <T variant="heading" numberOfLines={1}>{loan.person}</T>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <T variant="heading" numberOfLines={1} style={{ flexShrink: 1 }}>{loan.person}</T>
+                                {loan.isSplitLoan ? (
+                                    <View style={{ backgroundColor: 'rgba(43, 102, 224, 0.12)', paddingHorizontal: 7, paddingVertical: 1.5, borderRadius: radius.pill }}>
+                                        <T variant="tiny" color="#2B66E0" style={{ fontFamily: fonts.bold, fontSize: 10 }}>Split</T>
+                                    </View>
+                                ) : null}
+                            </View>
                             <T variant="small" color={colors.muted} numberOfLines={1}>
                                 {lent ? 'Owes you' : 'You owe'}{loan.note ? ` · ${loan.note}` : ''}
                             </T>
@@ -366,25 +373,38 @@ export default function Loans() {
                     <T variant="small" color={colors.muted}>Still open: {paying ? money(paying.amount - paying.repaidAmount) : ''}</T>
                     <Field label="Amount received or paid" value={payment} onChangeText={(t) => setPayment((prev) => formatAmountInput(t, prev))} placeholder="1,000" keyboardType="decimal-pad" autoFocus />
 
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
-                        <View style={{ flex: 1, paddingRight: space.md }}>
-                            <T variant="heading" style={{ fontSize: 15 }}>Record in Activity</T>
+                    {paying?.isSplitLoan ? (
+                        <View style={{ backgroundColor: 'rgba(43, 102, 224, 0.08)', padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: 'rgba(43, 102, 224, 0.2)' }}>
+                            <T variant="small" color="#2B66E0" style={{ fontFamily: fonts.bold, marginBottom: 2 }}>
+                                Split Expense Repayment
+                            </T>
                             <T variant="tiny" color={colors.inkSoft}>
-                                {paying?.direction === 'lent' ? 'Log as Loan repayment income' : 'Log as Loan repayment expense'}
+                                This settles what {paying.person} owes for your shared expense. Per your accounting rules, this is not counted as new income.
                             </T>
                         </View>
-                        <Switch value={repayRecordTx} onValueChange={setRepayRecordTx} trackColor={{ false: colors.mint2, true: colors.ink }} />
-                    </View>
-
-                    {repayRecordTx && (
-                        <View>
-                            <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>PAID VIA</T>
-                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                                {PAYMENT_METHODS.map((m) => (
-                                    <Chip key={m} label={m} active={repayMethod === m} onPress={() => setRepayMethod(repayMethod === m ? null : m)} />
-                                ))}
+                    ) : (
+                        <>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                                <View style={{ flex: 1, paddingRight: space.md }}>
+                                    <T variant="heading" style={{ fontSize: 15 }}>Record in Activity</T>
+                                    <T variant="tiny" color={colors.inkSoft}>
+                                        {paying?.direction === 'lent' ? 'Log as Loan repayment income' : 'Log as Loan repayment expense'}
+                                    </T>
+                                </View>
+                                <Switch value={repayRecordTx} onValueChange={setRepayRecordTx} trackColor={{ false: colors.mint2, true: colors.ink }} />
                             </View>
-                        </View>
+
+                            {repayRecordTx && (
+                                <View>
+                                    <T variant="tiny" color={colors.muted} style={{ marginBottom: 8, marginLeft: 4 }}>PAID VIA</T>
+                                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                                        {PAYMENT_METHODS.map((m) => (
+                                            <Chip key={m} label={m} active={repayMethod === m} onPress={() => setRepayMethod(repayMethod === m ? null : m)} />
+                                        ))}
+                                    </View>
+                                </View>
+                            )}
+                        </>
                     )}
 
                     <PillButton
@@ -393,7 +413,8 @@ export default function Loans() {
                         onPress={async () => {
                             const value = parseAmountInput(payment);
                             if (!paying || !(value > 0)) return setFormError('Enter an amount greater than zero.');
-                            if (await run(() => api.repayLoan(paying.id, value, repayRecordTx, repayRecordTx ? repayMethod : null))) setPaying(null);
+                            const recordTx = paying.isSplitLoan ? false : repayRecordTx;
+                            if (await run(() => api.repayLoan(paying.id, value, recordTx, recordTx ? repayMethod : null))) setPaying(null);
                         }}
                     />
                 </View>

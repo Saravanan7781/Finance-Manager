@@ -162,6 +162,8 @@ export interface Loan {
     dueDate: string | null;
     note: string;
     status: 'open' | 'settled';
+    isSplitLoan?: boolean;
+    sourceTxId?: string | null;
     createdAt: string;
     settledAt: string | null;
 }

@@ -43,6 +43,8 @@ exports.createLoan = async (req, res, next) => {
             dueDate: due,
             note: note || '',
             status: 'open',
+            isSplitLoan: Boolean(req.body.isSplitLoan),
+            sourceTxId: req.body.sourceTxId || null,
             createdBy: req.user.uid,
             createdAt: new Date(),
             settledAt: null,
@@ -165,7 +167,8 @@ exports.repayLoan = async (req, res, next) => {
             result = { repaidAmount, outstanding: round2(loan.amount - repaidAmount), status: settled ? 'settled' : 'open', payment };
         });
 
-        if (recordTransaction && result && result.payment > 0 && loanData) {
+        // Split loan repayments recover funds lent for friends and are not considered income
+        if (recordTransaction && result && result.payment > 0 && loanData && !loanData.isSplitLoan) {
             const userDoc = await db.collection('users').doc(req.user.uid).get();
             const isLent = loanData.direction === 'lent';
             const desc = isLent

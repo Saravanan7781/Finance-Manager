@@ -89,11 +89,11 @@ export function TxRow({ tx, onPress, showTime = false, flat = false }: { tx: Tx;
             <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
                 <T variant="body" color={income ? colors.income : colors.expense} style={{ fontFamily: fonts.extrabold, textAlign: 'right' }}>
                     {income ? '+' : '-'}
-                    {money(tx.amount)}
+                    {money(tx.type === 'expense' && tx.isSplit && typeof tx.myShare === 'number' ? tx.myShare : tx.amount)}
                 </T>
                 {tx.isSplit && tx.myShare !== undefined && tx.myShare !== null ? (
                     <T variant="tiny" color={colors.inkSoft} style={{ fontFamily: fonts.semibold, fontSize: 11, marginTop: 1 }}>
-                        ({money(tx.myShare)})
+                        Total {money(tx.amount)}
                     </T>
                 ) : null}
             </View>

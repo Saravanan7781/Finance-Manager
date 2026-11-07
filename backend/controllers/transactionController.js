@@ -11,6 +11,12 @@ const {
 
 const round2 = (n) => Math.round(n * 100) / 100;
 const toDate = (v) => (v && typeof v.toDate === 'function' ? v.toDate() : new Date(v));
+const getEffectiveExpense = (t) => {
+    if (t.type === 'expense' && t.isSplit && typeof t.myShare === 'number' && t.myShare >= 0) {
+        return t.myShare;
+    }
+    return t.amount;
+};
 
 exports.addTransaction = async (req, res, next) => {
     try {
@@ -65,9 +71,40 @@ exports.addTransaction = async (req, res, next) => {
             createdAt: new Date(),
         });
 
-        // Update rolling balance on family document
-        const delta = type === 'income' ? finalAmount : -finalAmount;
+        // When expense is marked as split, only myShare is considered as expense
+        const effectiveExpense = (type === 'expense' && Boolean(req.body.isSplit) && typeof req.body.myShare === 'number')
+            ? round2(parseFloat(req.body.myShare))
+            : finalAmount;
+        const delta = type === 'income' ? finalAmount : -effectiveExpense;
         await updateFamilyBalance(familyId, userId, delta);
+
+        // Note split share in loans as lent
+        const isSplit = Boolean(req.body.isSplit);
+        const myShare = req.body.myShare !== undefined && req.body.myShare !== null ? round2(parseFloat(req.body.myShare)) : null;
+        const lentAmount = req.body.lentAmount !== undefined && req.body.lentAmount !== null ? round2(parseFloat(req.body.lentAmount)) : null;
+        const splitWith = req.body.splitWith ? String(req.body.splitWith).trim() : null;
+
+        if (type === 'expense' && isSplit && lentAmount && lentAmount > 0) {
+            const person = splitWith || 'Friends';
+            const due = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+            const splitNote = description ? `${description} (Split expense)` : 'Split expense';
+            const loanRef = await db.collection('loans').add({
+                familyId,
+                direction: 'lent',
+                person,
+                amount: lentAmount,
+                repaidAmount: 0,
+                dueDate: due,
+                note: splitNote,
+                status: 'open',
+                isSplitLoan: true,
+                sourceTxId: transactionRef.id,
+                createdBy: userId,
+                createdAt: new Date(),
+                settledAt: null,
+            });
+            await transactionRef.update({ linkedLoanId: loanRef.id });
+        }
 
         res.status(201).json({ id: transactionRef.id });
     } catch (error) {
@@ -123,7 +160,10 @@ exports.addBatchTransactions = async (req, res, next) => {
             }
 
             const finalAmount = round2(parsedAmount);
-            const delta = item.type === 'income' ? finalAmount : -finalAmount;
+            const isSplitItem = Boolean(item.isSplit);
+            const myShareItem = item.myShare !== undefined && item.myShare !== null ? round2(parseFloat(item.myShare)) : null;
+            const effExpense = (item.type === 'expense' && isSplitItem && typeof myShareItem === 'number') ? myShareItem : finalAmount;
+            const delta = item.type === 'income' ? finalAmount : -effExpense;
             totalDelta += delta;
 
             let txDate = new Date();
@@ -195,7 +235,8 @@ exports.deleteBatchTransactions = async (req, res, next) => {
             const data = docSnap.data();
             if (data.familyId !== familyId) continue;
 
-            const delta = data.type === 'income' ? -data.amount : data.amount;
+            const effExpense = getEffectiveExpense(data);
+            const delta = data.type === 'income' ? -data.amount : effExpense;
             totalDelta += delta;
             deletedCount++;
             batch.delete(docRef);
@@ -237,7 +278,8 @@ exports.deleteAllSmsTransactions = async (req, res, next) => {
             const batch = db.batch();
             for (const doc of chunk) {
                 const data = doc.data();
-                const delta = data.type === 'income' ? -data.amount : data.amount;
+                const effExpense = getEffectiveExpense(data);
+            const delta = data.type === 'income' ? -data.amount : effExpense;
                 totalDelta += delta;
                 deletedCount++;
                 batch.delete(doc.ref);
@@ -375,14 +417,61 @@ exports.updateTransaction = async (req, res, next) => {
             );
         }
 
-        if (updates.amount !== undefined || updates.type !== undefined) {
-            const oldDelta = oldT.type === 'income' ? oldT.amount : -oldT.amount;
-            const newType = updates.type || oldT.type;
+        if (updates.amount !== undefined || updates.type !== undefined || updates.isSplit !== undefined || updates.myShare !== undefined) {
+            const oldEff = getEffectiveExpense(oldT);
+            const oldDelta = oldT.type === 'income' ? oldT.amount : -oldEff;
+            const mergedT = { ...oldT, ...updates };
+            const newEff = getEffectiveExpense(mergedT);
             const newAmount = updates.amount !== undefined ? updates.amount : oldT.amount;
-            const newDelta = newType === 'income' ? newAmount : -newAmount;
+            const newDelta = mergedT.type === 'income' ? newAmount : -newEff;
             const delta = round2(newDelta - oldDelta);
             if (delta !== 0) {
                 await updateFamilyBalance(family.id, oldT.createdBy, delta);
+            }
+        }
+
+        const mergedT = { ...oldT, ...updates };
+        if (oldT.linkedLoanId) {
+            try {
+                if (mergedT.isSplit && mergedT.lentAmount && mergedT.lentAmount > 0) {
+                    await db.collection('loans').doc(oldT.linkedLoanId).update({
+                        amount: mergedT.lentAmount,
+                        person: mergedT.splitWith || 'Friends',
+                        note: mergedT.description ? `${mergedT.description} (Split expense)` : 'Split expense',
+                    });
+                } else if (updates.isSplit === false) {
+                    const loanSnap = await db.collection('loans').doc(oldT.linkedLoanId).get();
+                    if (loanSnap.exists && loanSnap.data().repaidAmount === 0) {
+                        await db.collection('loans').doc(oldT.linkedLoanId).delete();
+                    }
+                    updates.linkedLoanId = null;
+                }
+            } catch (e) {
+                console.warn('Update linked loan error:', e);
+            }
+        } else if (mergedT.type === 'expense' && mergedT.isSplit && mergedT.lentAmount && mergedT.lentAmount > 0) {
+            try {
+                const person = mergedT.splitWith || 'Friends';
+                const due = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+                const splitNote = mergedT.description ? `${mergedT.description} (Split expense)` : 'Split expense';
+                const loanRef = await db.collection('loans').add({
+                    familyId: family.id,
+                    direction: 'lent',
+                    person,
+                    amount: mergedT.lentAmount,
+                    repaidAmount: 0,
+                    dueDate: due,
+                    note: splitNote,
+                    status: 'open',
+                    isSplitLoan: true,
+                    sourceTxId: doc.id,
+                    createdBy: oldT.createdBy,
+                    createdAt: new Date(),
+                    settledAt: null,
+                });
+                updates.linkedLoanId = loanRef.id;
+            } catch (e) {
+                console.warn('Create linked loan on update error:', e);
             }
         }
 
@@ -399,8 +488,20 @@ exports.deleteTransaction = async (req, res, next) => {
         assertCanModify(doc.data(), family, req.user.uid);
 
         const oldT = doc.data();
-        const delta = oldT.type === 'income' ? -oldT.amount : oldT.amount;
+        const oldEff = getEffectiveExpense(oldT);
+        const delta = oldT.type === 'income' ? -oldT.amount : oldEff;
         await updateFamilyBalance(family.id, oldT.createdBy, delta);
+
+        if (oldT.linkedLoanId) {
+            try {
+                const loanSnap = await db.collection('loans').doc(oldT.linkedLoanId).get();
+                if (loanSnap.exists && loanSnap.data().repaidAmount === 0) {
+                    await db.collection('loans').doc(oldT.linkedLoanId).delete();
+                }
+            } catch (e) {
+                console.warn('Delete linked loan error:', e);
+            }
+        }
 
         await doc.ref.delete();
         res.status(200).json({ message: 'Transaction deleted' });
@@ -508,8 +609,9 @@ exports.getTrend = async (req, res, next) => {
             const index = bounds.findIndex((b) => local >= b.start && local < b.end);
             if (index < 0) return;
             if (t.type === 'expense') {
-                buckets[index].expense += t.amount;
-                categories[t.category] = (categories[t.category] || 0) + t.amount;
+                const effAmount = getEffectiveExpense(t);
+                buckets[index].expense += effAmount;
+                categories[t.category] = (categories[t.category] || 0) + effAmount;
             } else {
                 buckets[index].income += t.amount;
             }
@@ -579,9 +681,10 @@ exports.getSummary = async (req, res, next) => {
             const when = toDate(t.date);
             const isExpense = t.type === 'expense';
             const countForNextMonth = Boolean(t.countForNextMonth);
+            const effExpense = getEffectiveExpense(t);
 
             if (when >= previous.start && when < previous.end && isExpense && !countForNextMonth) {
-                previousExpense += t.amount;
+                previousExpense += effExpense;
             }
 
             const inCurrent = countForNextMonth
@@ -595,11 +698,11 @@ exports.getSummary = async (req, res, next) => {
             byDay[day] = byDay[day] || { date: day, income: 0, expense: 0 };
 
             if (isExpense) {
-                expense += t.amount;
-                byDay[day].expense += t.amount;
+                expense += effExpense;
+                byDay[day].expense += effExpense;
 
                 byCategory[t.category] = byCategory[t.category] || { category: t.category, total: 0, count: 0 };
-                byCategory[t.category].total += t.amount;
+                byCategory[t.category].total += effExpense;
                 byCategory[t.category].count += 1;
 
                 byMember[t.createdBy] = byMember[t.createdBy] || {
@@ -607,7 +710,7 @@ exports.getSummary = async (req, res, next) => {
                     name: t.createdByName || 'Member',
                     expense: 0,
                 };
-                byMember[t.createdBy].expense += t.amount;
+                byMember[t.createdBy].expense += effExpense;
             } else {
                 income += t.amount;
                 byDay[day].income += t.amount;
@@ -628,7 +731,8 @@ exports.getSummary = async (req, res, next) => {
                 let myNet = 0;
                 myAll.forEach((d) => {
                     const row = d.data();
-                    myNet += row.type === 'income' ? row.amount : -row.amount;
+                    const eff = getEffectiveExpense(row);
+                    myNet += row.type === 'income' ? row.amount : -eff;
                 });
                 balance = round2(myNet);
                 const mBalances = family.memberBalances || {};
@@ -648,7 +752,8 @@ exports.getSummary = async (req, res, next) => {
                 const mBalances = {};
                 all.forEach((d) => {
                     const row = d.data();
-                    const delta = row.type === 'income' ? row.amount : -row.amount;
+                    const eff = getEffectiveExpense(row);
+                    const delta = row.type === 'income' ? row.amount : -eff;
                     totalNet += delta;
                     mBalances[row.createdBy] = (mBalances[row.createdBy] || 0) + delta;
                 });
