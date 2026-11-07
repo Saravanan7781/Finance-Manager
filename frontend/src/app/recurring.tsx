@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { Pressable, Switch, View } from 'react-native';
 import { DatePickerSheet } from '@/components/DatePickerSheet';
 import { Header } from '@/components/Header';
-import { Chip, Empty, ErrorBanner, Field, Glass, IconButton, Loading, PillButton, Reveal, Screen, Segmented, Sheet, SuccessBanner, T } from '@/components/ui';
+import { Chip, Empty, ErrorBanner, Field, Glass, IconButton, Loading, PillButton, Reveal, Screen, Segmented, Sheet, Skeleton, SuccessBanner, T } from '@/components/ui';
 import { colors, fonts, radius, space } from '@/constants/theme';
 import { useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
@@ -217,7 +217,29 @@ export default function Recurring() {
                 </Glass>
             </View>
 
-            {loading && !data ? <Loading /> : null}
+            {loading && !data ? (
+                <View style={{ gap: 12 }}>
+                    {[0, 1, 2].map((i) => (
+                        <Glass key={i} strong style={{ gap: 12, padding: space.lg }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+                                <Skeleton width={44} height={44} radius={22} />
+                                <View style={{ flex: 1, gap: 6 }}>
+                                    <Skeleton width="50%" height={16} />
+                                    <Skeleton width="30%" height={12} />
+                                </View>
+                                <Skeleton width={70} height={18} />
+                            </View>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Skeleton width={110} height={24} radius={12} />
+                                <View style={{ flexDirection: 'row', gap: 6 }}>
+                                    <Skeleton width={36} height={36} radius={18} />
+                                    <Skeleton width={36} height={36} radius={18} />
+                                </View>
+                            </View>
+                        </Glass>
+                    ))}
+                </View>
+            ) : null}
 
             {data && recurringList.length === 0 ? (
                 <Empty

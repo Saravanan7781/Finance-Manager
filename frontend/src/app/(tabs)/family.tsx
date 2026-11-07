@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import { BellRing, Sparkles, Check, ChevronRight, Copy, Download, HandCoins, Languages, LogOut, MessageSquare, Palette, PiggyBank, Plus, RefreshCw, Repeat, Share2, Tag, Target, Trash2, UserCheck, UserMinus, Users } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, Share, StyleSheet, Switch, View } from 'react-native';
-import { Avatar, Chip, ErrorBanner, Field, Glass, IconButton, PillButton, Screen, SectionHeader, Segmented, Sheet, SuccessBanner, T } from '@/components/ui';
+import { Avatar, Chip, ErrorBanner, Field, Glass, IconButton, PillButton, Screen, SectionHeader, Segmented, Sheet, Skeleton, SuccessBanner, T } from '@/components/ui';
 import { activePalette, colors, fonts, PALETTE_LIST, paletteName, radius, savePalette, space, type PaletteId } from '@/constants/theme';
 import { useAuth, useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
@@ -190,7 +190,11 @@ export default function Family() {
 
             <Glass strong>
                 <T variant="tiny" color={colors.muted}>{t('invite_code')}</T>
-                <T variant="display" style={{ fontSize: 34, letterSpacing: 4, marginVertical: space.sm }} selectable>{code}</T>
+                {!data ? (
+                    <Skeleton width={180} height={34} style={{ marginVertical: space.sm }} />
+                ) : (
+                    <T variant="display" style={{ fontSize: 34, letterSpacing: 4, marginVertical: space.sm }} selectable>{code}</T>
+                )}
                 <View style={styles.rowGap}>
                     <PillButton label={copied ? t('copied') : t('copy')} Icon={Copy} variant="ink" onPress={copy} style={{ flex: 1, minHeight: 46 }} />
                     <PillButton label={t('share')} Icon={Share2} variant="glass" onPress={share} style={{ flex: 1, minHeight: 46 }} />
@@ -251,7 +255,24 @@ export default function Family() {
 
             <SectionHeader title={t('members')} />
             <Glass style={{ paddingVertical: 8 }}>
-                {(family?.members ?? []).map((member, i, all) => (
+                {!data ? (
+                    <>
+                        <View style={[styles.member, styles.memberLine]}>
+                            <Skeleton width={42} height={42} radius={21} />
+                            <View style={{ flex: 1, gap: 6, marginLeft: space.md }}>
+                                <Skeleton width="45%" height={16} />
+                                <Skeleton width="25%" height={12} />
+                            </View>
+                        </View>
+                        <View style={styles.member}>
+                            <Skeleton width={42} height={42} radius={21} />
+                            <View style={{ flex: 1, gap: 6, marginLeft: space.md }}>
+                                <Skeleton width="40%" height={16} />
+                                <Skeleton width="20%" height={12} />
+                            </View>
+                        </View>
+                    </>
+                ) : (family?.members ?? []).map((member, i, all) => (
                     <View key={member.uid} style={[styles.member, i < all.length - 1 && styles.memberLine]}>
                         <Avatar name={member.displayName} size={42} />
                         <View style={{ flex: 1 }}>

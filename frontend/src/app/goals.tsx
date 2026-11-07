@@ -3,7 +3,7 @@ import { PiggyBank, Plus, Trash2 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Switch, View } from 'react-native';
 import { Header } from '@/components/Header';
-import { Chip, Empty, ErrorBanner, Field, Glass, IconButton, Loading, PillButton, Progress, Reveal, Screen, Segmented, Sheet, T } from '@/components/ui';
+import { Chip, Empty, ErrorBanner, Field, Glass, IconButton, Loading, PillButton, Progress, Reveal, Screen, Segmented, Sheet, Skeleton, T } from '@/components/ui';
 import { colors, fonts, space } from '@/constants/theme';
 import { useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
@@ -79,7 +79,29 @@ export default function Goals() {
         <Screen refreshing={refreshing} onRefresh={pullToRefresh}>
             <Header title="Goals" right={<IconButton Icon={Plus} tone="ink" label="New goal" onPress={() => { setFormError(null); setCreating(true); }} />} />
             <ErrorBanner message={error} onRetry={reload} />
-            {loading && !data ? <Loading /> : null}
+            {loading && !data ? (
+                <View style={{ gap: 12 }}>
+                    {[0, 1].map((i) => (
+                        <Glass key={i} strong style={{ gap: 12, padding: space.lg }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <View style={{ gap: 6, flex: 1 }}>
+                                    <Skeleton width="50%" height={18} />
+                                    <Skeleton width="35%" height={12} />
+                                </View>
+                                <Skeleton width={48} height={24} />
+                            </View>
+                            <Skeleton height={10} radius={5} />
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Skeleton width={130} height={14} />
+                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                    <Skeleton width={36} height={36} radius={18} />
+                                    <Skeleton width={36} height={36} radius={18} />
+                                </View>
+                            </View>
+                        </Glass>
+                    ))}
+                </View>
+            ) : null}
             {data && data.length === 0 ? <Empty Icon={PiggyBank} title="No goals yet" hint="Pick something to save for together, like a trip or an emergency fund." /> : null}
 
             <View style={{ gap: 12 }}>

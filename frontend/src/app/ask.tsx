@@ -1,4 +1,4 @@
-import { ArrowUp, KeyRound, Sparkles } from 'lucide-react-native';
+import { ArrowUp, Check, RotateCcw, Sparkles } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -13,15 +13,23 @@ import {
     type ScrollViewInstance,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Header } from '@/components/Header';
-import { ErrorBanner, IconButton, Loading, Screen, T } from '@/components/ui';
+import { ErrorBanner, Loading, Screen, Skeleton, T } from '@/components/ui';
 import { colors, fonts, radius, space } from '@/constants/theme';
 import { useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
 import { api } from '@/lib/api';
-import { askFinancialAi, SUGGESTIONS, SUGGESTIONS_TA } from '@/lib/ask';
+import {
+    askFinancialAi,
+    executeAiAction,
+    undoAiAction,
+    SUGGESTIONS,
+    SUGGESTIONS_TA,
+    type ExecutedActionInfo,
+} from '@/lib/ask';
 import { monthKey, tzOffset } from '@/lib/format';
 import { useTranslation } from '@/lib/i18n';
 import { isAiApiConfigured } from '@/lib/aiSmsParser';
@@ -30,6 +38,8 @@ interface Message {
     id: number;
     from: 'me' | 'bot';
     text: string;
+    executedAction?: ExecutedActionInfo | null;
+    undone?: boolean;
 }
 
 function Orb({ size = 28 }: { size?: number }) {
@@ -84,6 +94,19 @@ export default function Ask() {
         return { summary, loans, goals, budgets };
     }, [familyId]);
 
+    const handleUndo = async (messageId: number, undoTarget: { entityId: string; type: string }) => {
+        try {
+            await undoAiAction(undoTarget);
+            setMessages((prev) =>
+                prev.map((msg) => (msg.id === messageId ? { ...msg, undone: true } : msg))
+            );
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            reload();
+        } catch (e) {
+            console.warn('Undo failed:', e);
+        }
+    };
+
     const send = async (text: string) => {
         const question = text.trim();
         if (!question || !data || isTyping) return;
@@ -97,8 +120,28 @@ export default function Ask() {
         setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 60);
 
         try {
-            const answerText = await askFinancialAi(question, data, updatedMessages);
-            setMessages((m) => [...m, { id: nextId + 1, from: 'bot', text: answerText }]);
+            const result = await askFinancialAi(question, data, updatedMessages);
+            let executed: ExecutedActionInfo | null = null;
+
+            if (result.action && familyId) {
+                try {
+                    executed = await executeAiAction(result.action, familyId, data);
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+                    reload();
+                } catch (actionErr: any) {
+                    console.warn('Action execution error:', actionErr);
+                }
+            }
+
+            setMessages((m) => [
+                ...m,
+                {
+                    id: nextId + 1,
+                    from: 'bot',
+                    text: result.reply,
+                    executedAction: executed,
+                },
+            ]);
         } catch {
             setMessages((m) => [
                 ...m,
@@ -136,7 +179,17 @@ export default function Ask() {
                     showsVerticalScrollIndicator={false}
                 >
                     <ErrorBanner message={error} onRetry={reload} />
-                    {loading && !data ? <Loading dark /> : null}
+                    {loading && !data ? (
+                        <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: space.xl, gap: 12 }}>
+                            <Skeleton width={110} height={24} radius={12} dark />
+                            <Skeleton width="65%" height={32} dark />
+                            <Skeleton width="85%" height={16} dark />
+                            <View style={{ flexDirection: 'row', gap: 10, marginTop: space.sm }}>
+                                <Skeleton width={150} height={85} radius={radius.lg} dark />
+                                <Skeleton width={150} height={85} radius={radius.lg} dark />
+                            </View>
+                        </View>
+                    ) : null}
 
                     {messages.length === 0 && data ? (
                         <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: space.xl }}>
@@ -149,10 +202,10 @@ export default function Ask() {
                                 </View>
                             </View>
                             <T variant="display" color={colors.white} style={{ marginTop: space.md, marginBottom: space.sm }}>
-                                {t('what_to_know') || 'What do you want to know?'}
+                                {t('what_to_know') || 'What do you want to do?'}
                             </T>
                             <T variant="small" color="rgba(255,255,255,0.62)" style={{ marginBottom: space.xl }}>
-                                {t('ask_subtitle') || 'Ask about your family finances in English or Tamil. Answers are calculated directly from your records.'}
+                                {t('ask_subtitle') || 'Ask questions about your money or tell me to record transactions, loans, and goals in English or Tamil.'}
                             </T>
                             <ScrollView
                                 horizontal
@@ -189,10 +242,61 @@ export default function Ask() {
                         ) : (
                             <View key={m.id} style={styles.botRow}>
                                 <Orb />
-                                <View style={[styles.bubble, styles.theirs]}>
-                                    <T variant="body" color="rgba(255,255,255,0.92)">
-                                        {m.text}
-                                    </T>
+                                <View style={{ flex: 1, maxWidth: '86%' }}>
+                                    <View style={[styles.bubble, styles.theirs]}>
+                                        <T variant="body" color="rgba(255,255,255,0.92)">
+                                            {m.text}
+                                        </T>
+                                    </View>
+
+                                    {m.executedAction && (
+                                        <View style={[styles.actionCard, m.undone && styles.actionCardUndone]}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                                                <View
+                                                    style={[
+                                                        styles.actionIconCircle,
+                                                        m.undone && { backgroundColor: 'rgba(255,255,255,0.1)' },
+                                                    ]}
+                                                >
+                                                    {m.undone ? (
+                                                        <RotateCcw size={12} color="rgba(255,255,255,0.5)" />
+                                                    ) : (
+                                                        <Check size={14} color="#10B981" strokeWidth={2.8} />
+                                                    )}
+                                                </View>
+                                                <View style={{ flex: 1 }}>
+                                                    <T
+                                                        variant="small"
+                                                        style={{
+                                                            color: m.undone ? 'rgba(255,255,255,0.45)' : colors.white,
+                                                            fontFamily: fonts.semibold,
+                                                            textDecorationLine: m.undone ? 'line-through' : 'none',
+                                                        }}
+                                                    >
+                                                        {m.undone ? `Undone: ${m.executedAction.label}` : m.executedAction.label}
+                                                    </T>
+                                                    {m.executedAction.details && !m.undone ? (
+                                                        <T variant="tiny" style={{ color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>
+                                                            {m.executedAction.details}
+                                                        </T>
+                                                    ) : null}
+                                                </View>
+                                            </View>
+
+                                            {m.executedAction.undoTarget && !m.undone ? (
+                                                <Pressable
+                                                    accessibilityRole="button"
+                                                    onPress={() => handleUndo(m.id, m.executedAction!.undoTarget!)}
+                                                    style={styles.undoBtn}
+                                                >
+                                                    <RotateCcw size={12} color={colors.ember3} />
+                                                    <T variant="tiny" style={{ color: colors.ember3, fontFamily: fonts.semibold }}>
+                                                        Undo
+                                                    </T>
+                                                </Pressable>
+                                            ) : null}
+                                        </View>
+                                    )}
                                 </View>
                             </View>
                         )
@@ -218,7 +322,7 @@ export default function Ask() {
                         value={draft}
                         onChangeText={setDraft}
                         onSubmitEditing={() => send(draft)}
-                        placeholder={t('ask_money_hint') || 'Ask about your money'}
+                        placeholder={t('ask_money_hint') || 'Ask or tell: "Spent ₹250 on lunch"'}
                         placeholderTextColor="rgba(255,255,255,0.45)"
                         returnKeyType="send"
                         style={styles.input}
@@ -234,8 +338,6 @@ export default function Ask() {
                     </Pressable>
                 </View>
             </KeyboardAvoidingView>
-
-            
         </Screen>
     );
 }
@@ -248,12 +350,6 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(254, 240, 138, 0.2)',
         borderWidth: 1,
         borderColor: 'rgba(254, 240, 138, 0.4)',
-    },
-    aiBadgeSetup: {
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        borderRadius: radius.pill,
-        backgroundColor: 'rgba(255,255,255,0.1)',
     },
     suggestion: {
         width: 172,
@@ -278,8 +374,45 @@ const styles = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.1)',
         borderBottomLeftRadius: 6,
         marginBottom: 0,
+        maxWidth: '100%',
     },
     botRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 14 },
+    actionCard: {
+        marginTop: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 9,
+        borderRadius: 14,
+        backgroundColor: 'rgba(16, 185, 129, 0.12)',
+        borderWidth: 1,
+        borderColor: 'rgba(16, 185, 129, 0.3)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+    },
+    actionCardUndone: {
+        backgroundColor: 'rgba(255,255,255,0.04)',
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    actionIconCircle: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: 'rgba(16, 185, 129, 0.2)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    undoBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: radius.pill,
+        backgroundColor: 'rgba(255, 122, 42, 0.15)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 122, 42, 0.3)',
+    },
     inputBar: {
         flexDirection: 'row',
         alignItems: 'center',

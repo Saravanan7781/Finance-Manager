@@ -2,7 +2,7 @@ import { PiggyBank, Plus, Trash2 } from 'lucide-react-native';
 import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { Header } from '@/components/Header';
-import { Chip, Empty, ErrorBanner, Field, Glass, IconButton, Loading, PillButton, Progress, Reveal, Screen, Sheet, T } from '@/components/ui';
+import { Chip, Empty, ErrorBanner, Field, Glass, IconButton, Loading, PillButton, Progress, Reveal, Screen, Sheet, Skeleton, T } from '@/components/ui';
 import { colors, space } from '@/constants/theme';
 import { useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
@@ -58,7 +58,24 @@ export default function Budgets() {
             <Header title="Budgets" right={<IconButton Icon={Plus} tone="ink" label="New budget" onPress={() => openSheet()} />} />
             <T variant="small" color={colors.inkSoft} style={{ marginBottom: space.lg }}>Monthly limits, measured against what the family has spent this month.</T>
             <ErrorBanner message={error} onRetry={reload} />
-            {loading && !data ? <Loading /> : null}
+            {loading && !data ? (
+                <View style={{ gap: 12 }}>
+                    {[0, 1, 2].map((i) => (
+                        <Glass key={i} strong style={{ gap: 12, padding: space.lg }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+                                <Skeleton width={42} height={42} radius={21} />
+                                <View style={{ flex: 1, gap: 6 }}>
+                                    <Skeleton width="45%" height={16} />
+                                    <Skeleton width="30%" height={12} />
+                                </View>
+                                <Skeleton width={38} height={38} radius={19} />
+                            </View>
+                            <Skeleton height={10} radius={5} />
+                            <Skeleton width={120} height={14} />
+                        </Glass>
+                    ))}
+                </View>
+            ) : null}
             {data && data.budgets.length === 0 ? <Empty Icon={PiggyBank} title="No budgets yet" hint="Set a limit for groceries, travel or anything you want to keep an eye on." /> : null}
 
             <View style={{ gap: 12 }}>

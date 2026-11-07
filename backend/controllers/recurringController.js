@@ -52,40 +52,76 @@ exports.getRecurring = async (req, res, next) => {
                 ? data.nextRunDate.toDate()
                 : new Date(data.nextRunDate);
 
-            if (data.status === 'active' && data.autoRecord && nextRun <= now) {
-                // Auto-post due transaction
-                const userDoc = await db.collection('users').doc(data.createdBy || req.user.uid).get();
-                const userName = userDoc.exists ? userDoc.data().displayName : data.createdByName || null;
-                const desc = data.description ? `${data.description} (Recurring)` : 'Recurring payment';
-                const keywords = buildKeywords(desc, data.category, data.paymentMethod, userName);
+            if (data.status === 'active' && data.autoRecord && !isNaN(nextRun.getTime()) && nextRun <= now) {
+                let executed = false;
+                let scheduledRun = null;
+                let updatedNextRun = null;
+                let ruleData = null;
 
-                await db.collection('transactions').add({
-                    familyId,
-                    createdBy: data.createdBy || req.user.uid,
-                    createdByName: userName,
-                    amount: data.amount,
-                    type: data.type,
-                    category: data.category,
-                    description: desc,
-                    paymentMethod: data.paymentMethod || null,
-                    source: 'recurring',
-                    recurringId: doc.id,
-                    keywords,
-                    date: nextRun,
-                    createdAt: new Date(),
-                });
+                try {
+                    // Concurrency-safe check and date advance inside atomic runTransaction
+                    await db.runTransaction(async (transaction) => {
+                        const freshDoc = await transaction.get(doc.ref);
+                        if (!freshDoc.exists) return;
 
-                await updateFamilyBalance(familyId, data.createdBy || req.user.uid, data.type === 'income' ? data.amount : -data.amount);
+                        const freshData = freshDoc.data();
+                        if (freshData.status !== 'active' || !freshData.autoRecord) return;
 
-                const updatedNextRun = calculateNextRun(nextRun, data.frequency);
-                await doc.ref.update({
-                    lastRunDate: nextRun,
-                    nextRunDate: updatedNextRun,
-                    updatedAt: new Date(),
-                });
+                        const freshNext = freshData.nextRunDate && typeof freshData.nextRunDate.toDate === 'function'
+                            ? freshData.nextRunDate.toDate()
+                            : new Date(freshData.nextRunDate);
 
-                data.lastRunDate = nextRun;
-                data.nextRunDate = updatedNextRun;
+                        if (isNaN(freshNext.getTime()) || freshNext > now) {
+                            return; // Already processed by a concurrent request
+                        }
+
+                        scheduledRun = freshNext;
+                        updatedNextRun = calculateNextRun(freshNext, freshData.frequency);
+                        ruleData = freshData;
+
+                        transaction.update(doc.ref, {
+                            lastRunDate: scheduledRun,
+                            nextRunDate: updatedNextRun,
+                            updatedAt: new Date(),
+                        });
+                        executed = true;
+                    });
+                } catch (txErr) {
+                    if (process.env.NODE_ENV !== 'test') {
+                        console.warn('Recurring autoRecord transaction conflict:', txErr.message);
+                    }
+                }
+
+                if (executed && ruleData) {
+                    const creatorUid = ruleData.createdBy || req.user.uid;
+                    const userDoc = await db.collection('users').doc(creatorUid).get();
+                    const userName = userDoc.exists ? userDoc.data().displayName : ruleData.createdByName || null;
+                    const desc = ruleData.description ? `${ruleData.description} (Recurring)` : 'Recurring payment';
+                    const keywords = buildKeywords(desc, ruleData.category, ruleData.paymentMethod, userName);
+                    const dedupeKey = `recurring_${doc.id}_${scheduledRun.toISOString().slice(0, 10)}`;
+
+                    await db.collection('transactions').add({
+                        familyId,
+                        createdBy: creatorUid,
+                        createdByName: userName,
+                        amount: ruleData.amount,
+                        type: ruleData.type,
+                        category: ruleData.category,
+                        description: desc,
+                        paymentMethod: ruleData.paymentMethod || null,
+                        source: 'recurring',
+                        recurringId: doc.id,
+                        dedupeKey,
+                        keywords,
+                        date: scheduledRun,
+                        createdAt: new Date(),
+                    });
+
+                    await updateFamilyBalance(familyId, creatorUid, ruleData.type === 'income' ? ruleData.amount : -ruleData.amount);
+
+                    data.lastRunDate = scheduledRun;
+                    data.nextRunDate = updatedNextRun;
+                }
             }
 
             items.push(serializeDoc(doc));

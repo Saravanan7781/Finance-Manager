@@ -199,7 +199,11 @@ For each message, extract:
 - merchant (clean merchant or entity name, or null)
 - paymentMethod ('UPI', 'Card', or 'Bank')
 - date (transaction date in 'YYYY-MM-DD' format if mentioned in the message text like '01-Nov-26' -> '2026-11-01', '30-Oct-26' -> '2026-10-30', '02/11/2026' -> '2026-11-02'. If 2-digit year like '26' or '24', expand to 20XX. If year is omitted, assume current year 2026. If no date is mentioned in the SMS, return null)
-- countForNextMonth (boolean: true if category is 'Salary' and credited near end of month or for next month's cycle, otherwise false)
+- countForNextMonth (boolean: true if category is 'Salary' and transaction date is on or after the 23rd of the month (e.g. 23rd to 31st) or text mentions next month/advance, otherwise false)
+
+CRITICAL RULES:
+- ONLY extract actual completed debit or credit transactions.
+- Do NOT include OTP (One Time Password) messages, login codes, verification PINs, payment requests, or promotional ads in results. If a message is an OTP or non-financial, omit it completely from the results array.
 
 Return ONLY valid JSON matching this exact structure:
 {
@@ -268,13 +272,14 @@ async function callAiApi(
     // 2. If Gemini and OpenAI-compatible failed or was not parsed, try Gemini native generateContent
     if (!rawJsonContent && (config.provider === 'gemini' || config.apiKey)) {
         const key = (process.env.EXPO_PUBLIC_AI_API_KEY || config.apiKey || '').trim();
-        const rawModel = (process.env.EXPO_PUBLIC_AI_MODEL || config.model || 'gemini-3.5-flash').trim();
+        const rawModel = (process.env.EXPO_PUBLIC_AI_MODEL || config.model || 'gemini-3.5-flash-lite').trim();
         const candidateModels = [
+            'gemini-3.5-flash-lite',
+            'gemini-3-flash-preview',
+            'gemini-3.1-flash-lite',
             rawModel.toLowerCase().replace(/\s+/g, '-'),
             'gemini-3.5-flash',
             'gemini-flash-lite-latest',
-            'gemini-3.8-flash',
-            'gemini-3.7-flash',
             'gemini-flash-latest',
         ];
         const uniqueModels = Array.from(new Set(candidateModels));
@@ -355,6 +360,9 @@ export async function aiParseSingleSms(text: string, dateTimestamp?: number): Pr
     if (!text || text.trim().length < 5) return null;
 
     const trimmed = text.replace(/\s+/g, ' ').trim();
+    if (/\b(?:otp|one time password|verification code|secret code|do not share|security code)\b/i.test(trimmed)) {
+        return null;
+    }
 
     // If AI is configured, query the AI model for high-accuracy extraction
     if (isAiApiConfigured()) {
@@ -365,6 +373,13 @@ export async function aiParseSingleSms(text: string, dateTimestamp?: number): Pr
                 const local = localHeuristicAiParser(trimmed, dateTimestamp);
                 const dedupeKey = local?.dedupeKey || `sms-${hash(trimmed)}-${aiItem.amount}`;
                 const parsedDate = aiItem.date || local?.date || (dateTimestamp ? new Date(dateTimestamp).toISOString() : new Date().toISOString());
+                let countForNextMonth = Boolean(aiItem.countForNextMonth);
+                if ((aiItem.category === 'Salary' || local?.category === 'Salary') && parsedDate) {
+                    const parsedDay = new Date(parsedDate).getDate();
+                    if (parsedDay >= 23) {
+                        countForNextMonth = true;
+                    }
+                }
 
                 return {
                     amount: aiItem.amount,
@@ -374,7 +389,7 @@ export async function aiParseSingleSms(text: string, dateTimestamp?: number): Pr
                     paymentMethod: aiItem.paymentMethod || local?.paymentMethod || 'Bank',
                     dedupeKey,
                     date: parsedDate,
-                    countForNextMonth: Boolean(aiItem.countForNextMonth),
+                    countForNextMonth,
                     rawBody: trimmed,
                 };
             }
@@ -460,6 +475,11 @@ export async function aiExtractBulkSms(
     const seenDedupe = new Set<string>();
 
     for (const item of prepared) {
+        // Exclude non-financial alerts such as OTPs or verification PINs
+        if (/\b(?:otp|one time password|verification code|secret code|do not share|security code)\b/i.test(item.text)) {
+            continue;
+        }
+
         const localParsed = localHeuristicAiParser(item.text, item.date);
         const aiItem = aiResults.get(item.id);
 
@@ -472,9 +492,15 @@ export async function aiExtractBulkSms(
         const category = aiItem?.category ?? localParsed?.category ?? 'Other';
         const merchant = aiItem?.merchant ?? localParsed?.merchant ?? null;
         const paymentMethod = aiItem?.paymentMethod ?? localParsed?.paymentMethod ?? 'Bank';
-        const countForNextMonth = aiItem?.countForNextMonth ?? localParsed?.countForNextMonth ?? false;
-
         const parsedDate = aiItem?.date || localParsed?.date || (item.date ? new Date(item.date).toISOString() : new Date().toISOString());
+        let countForNextMonth = aiItem?.countForNextMonth ?? localParsed?.countForNextMonth ?? false;
+        if ((category === 'Salary' || localParsed?.category === 'Salary') && parsedDate) {
+            const parsedDay = new Date(parsedDate).getDate();
+            if (parsedDay >= 23) {
+                countForNextMonth = true;
+            }
+        }
+
         const dedupeKey = localParsed?.dedupeKey || `sms-${hash(item.text)}-${amount}`;
 
         const finalParsed: ParsedSms = {

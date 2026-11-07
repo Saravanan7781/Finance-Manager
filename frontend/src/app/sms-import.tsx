@@ -23,6 +23,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Header } from '@/components/Header';
+import { TxRowSkeleton } from '@/components/TxRow';
 import {
     Chip,
     Empty,
@@ -503,12 +504,19 @@ export default function SmsImport() {
 
                 {/* Loading state */}
                 {loading && (
-                    <View style={styles.loadingContainer}>
-                        <Loading />
-                        <T variant="heading" style={{ fontSize: 18, marginTop: space.sm }}>Scanning Messages...</T>
-                        <T variant="small" color={colors.muted}>
-                            Loading bank & UPI alerts for {PERIODS.find((p) => p.value === period)?.label.toLowerCase()}
-                        </T>
+                    <View style={{ gap: space.md }}>
+                        <View style={styles.loadingContainer}>
+                            <Loading />
+                            <T variant="heading" style={{ fontSize: 18, marginTop: space.sm }}>Scanning Messages...</T>
+                            <T variant="small" color={colors.muted}>
+                                Loading bank & UPI alerts for {PERIODS.find((p) => p.value === period)?.label.toLowerCase()}
+                            </T>
+                        </View>
+                        <Glass strong style={{ padding: space.sm, gap: 8 }}>
+                            <TxRowSkeleton />
+                            <TxRowSkeleton />
+                            <TxRowSkeleton />
+                        </Glass>
                     </View>
                 )}
 

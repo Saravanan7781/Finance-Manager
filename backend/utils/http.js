@@ -57,31 +57,54 @@ const parseLimit = (value, fallback = 50, max = 200) => {
     return Math.min(n, max);
 };
 
-const round2 = (n) => Math.round(n * 100) / 100;
+const round2 = (n) => {
+    if (typeof n !== 'number' || !Number.isFinite(n)) return 0;
+    return Math.round((n + Number.EPSILON) * 100) / 100;
+};
 
-// Updates rolling balance and member balances on the family document
+// Updates rolling balance and member balances on the family document atomically
 const updateFamilyBalance = async (familyId, userId, delta) => {
+    const safeDelta = round2(delta);
+    if (safeDelta === 0) return;
+    return updateFamilyBalances(familyId, { [userId]: safeDelta });
+};
+
+// Atomically updates rolling family balance and multiple member balances in a single transaction
+const updateFamilyBalances = async (familyId, memberDeltas) => {
+    const entries = Object.entries(memberDeltas || {})
+        .map(([uid, d]) => [uid, round2(d)])
+        .filter(([_, d]) => d !== 0);
+
+    if (entries.length === 0) return;
+
     try {
         const familyRef = db.collection('families').doc(familyId);
-        const fDoc = await familyRef.get();
-        if (fDoc.exists) {
+        await db.runTransaction(async (transaction) => {
+            const fDoc = await transaction.get(familyRef);
+            if (!fDoc.exists) return;
+
             const fData = fDoc.data();
-            const curBalance = typeof fData.balance === 'number' ? fData.balance : 0;
-            const mBalances = fData.memberBalances || {};
-            const curMember = typeof mBalances[userId] === 'number' ? mBalances[userId] : 0;
-            await familyRef.update({
-                balance: round2(curBalance + delta),
-                memberBalances: {
-                    ...mBalances,
-                    [userId]: round2(curMember + delta),
-                },
+            let curBalance = typeof fData.balance === 'number' && Number.isFinite(fData.balance) ? fData.balance : 0;
+            const mBalances = fData.memberBalances && typeof fData.memberBalances === 'object' ? { ...fData.memberBalances } : {};
+
+            let totalDelta = 0;
+            for (const [uid, delta] of entries) {
+                const curMember = typeof mBalances[uid] === 'number' && Number.isFinite(mBalances[uid]) ? mBalances[uid] : 0;
+                mBalances[uid] = round2(curMember + delta);
+                totalDelta = round2(totalDelta + delta);
+            }
+
+            transaction.update(familyRef, {
+                balance: round2(curBalance + totalDelta),
+                memberBalances: mBalances,
                 updatedAt: new Date(),
             });
-        }
+        });
     } catch (err) {
         if (process.env.NODE_ENV !== 'test') {
-            console.error('Failed to update family balance:', err.message);
+            console.error('Failed to update family balances:', err.message);
         }
+        throw err;
     }
 };
 
@@ -105,6 +128,8 @@ module.exports = {
     getFamilyForAdmin,
     getOwnedDoc,
     parseLimit,
+    round2,
     updateFamilyBalance,
+    updateFamilyBalances,
     buildKeywords,
 };

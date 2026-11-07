@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { Pressable, Switch, View } from 'react-native';
 import { DatePickerSheet } from '@/components/DatePickerSheet';
 import { Header } from '@/components/Header';
-import { Chip, Empty, ErrorBanner, Field, Glass, IconButton, Loading, PillButton, Progress, Reveal, Screen, Segmented, Sheet, SuccessBanner, T } from '@/components/ui';
+import { Chip, Empty, ErrorBanner, Field, Glass, IconButton, Loading, PillButton, Progress, Reveal, Screen, Segmented, Sheet, Skeleton, SuccessBanner, T } from '@/components/ui';
 import { colors, fonts, radius, space } from '@/constants/theme';
 import { useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
@@ -237,7 +237,11 @@ export default function Loans() {
                         filter === 'lent' && { borderWidth: 2, borderColor: colors.income },
                     ]}>
                         <T variant="tiny" color={filter === 'lent' ? colors.income : colors.muted}>OWED TO YOU</T>
-                        <T variant="title" color={colors.income} style={{ fontSize: 22, marginTop: 2 }}>{money(owedToUs)}</T>
+                        {loading && !data ? (
+                            <Skeleton width={80} height={24} style={{ marginTop: 4 }} />
+                        ) : (
+                            <T variant="title" color={colors.income} style={{ fontSize: 22, marginTop: 2 }}>{money(owedToUs)}</T>
+                        )}
                     </Glass>
                 </Pressable>
                 <Pressable
@@ -254,12 +258,35 @@ export default function Loans() {
                         filter === 'borrowed' && { borderWidth: 2, borderColor: colors.expense },
                     ]}>
                         <T variant="tiny" color={filter === 'borrowed' ? colors.expense : colors.muted}>YOU OWE</T>
-                        <T variant="title" color={colors.expense} style={{ fontSize: 22, marginTop: 2 }}>{money(weOwe)}</T>
+                        {loading && !data ? (
+                            <Skeleton width={80} height={24} style={{ marginTop: 4 }} />
+                        ) : (
+                            <T variant="title" color={colors.expense} style={{ fontSize: 22, marginTop: 2 }}>{money(weOwe)}</T>
+                        )}
                     </Glass>
                 </Pressable>
             </View>
 
-            {loading && !data ? <Loading /> : null}
+            {loading && !data ? (
+                <View style={{ gap: 12 }}>
+                    {[0, 1].map((i) => (
+                        <Glass key={i} strong style={{ gap: 12, padding: space.lg }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <View style={{ gap: 6, flex: 1 }}>
+                                    <Skeleton width="45%" height={16} />
+                                    <Skeleton width="65%" height={12} />
+                                </View>
+                                <Skeleton width={80} height={22} />
+                            </View>
+                            <Skeleton height={8} radius={4} />
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Skeleton width={110} height={24} radius={12} />
+                                <Skeleton width={72} height={32} radius={16} />
+                            </View>
+                        </Glass>
+                    ))}
+                </View>
+            ) : null}
             {data && open.length === 0 ? <Empty Icon={HandCoins} title="Nothing lent or borrowed" hint="Add a loan to keep track of who owes what, with a reminder when it is due." /> : null}
             {data && open.length > 0 && filtered.length === 0 ? (
                 <T variant="small" color={colors.muted} style={{ textAlign: 'center', marginVertical: space.xl }}>

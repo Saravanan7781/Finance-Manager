@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { db } = require('../config/firebase');
 const {
     HttpError,
@@ -5,11 +6,12 @@ const {
     getFamilyForMember,
     getOwnedDoc,
     parseLimit,
+    round2,
     updateFamilyBalance,
+    updateFamilyBalances,
     buildKeywords,
 } = require('../utils/http');
 
-const round2 = (n) => Math.round(n * 100) / 100;
 const toDate = (v) => (v && typeof v.toDate === 'function' ? v.toDate() : new Date(v));
 const getEffectiveExpense = (t) => {
     if (t.type === 'expense' && t.isSplit && typeof t.myShare === 'number' && t.myShare >= 0) {
@@ -26,17 +28,8 @@ exports.addTransaction = async (req, res, next) => {
         await getFamilyForMember(familyId, userId);
 
         const parsedAmount = parseFloat(amount);
-        if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        if (isNaN(parsedAmount) || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
             throw new HttpError(400, 'Amount must be a positive number');
-        }
-
-        // Auto-captured transactions (SMS) carry a key so the same message never lands twice.
-        if (dedupeKey) {
-            const duplicate = await db.collection('transactions')
-                .where('familyId', '==', familyId)
-                .where('dedupeKey', '==', dedupeKey)
-                .get();
-            if (!duplicate.empty) throw new HttpError(409, 'Duplicate transaction');
         }
 
         const userDoc = await db.collection('users').doc(userId).get();
@@ -51,63 +44,152 @@ exports.addTransaction = async (req, res, next) => {
         }
 
         const isSplit = Boolean(req.body.isSplit);
-        const myShare = req.body.myShare !== undefined && req.body.myShare !== null ? round2(parseFloat(req.body.myShare)) : null;
+        const rawMyShare = req.body.myShare !== undefined && req.body.myShare !== null ? parseFloat(req.body.myShare) : null;
+        if (rawMyShare !== null && (!Number.isFinite(rawMyShare) || rawMyShare < 0)) {
+            throw new HttpError(400, 'Invalid myShare amount');
+        }
+        const myShare = rawMyShare !== null ? round2(rawMyShare) : null;
         const isSplitExpense = type === 'expense' && isSplit && typeof myShare === 'number' && myShare > 0;
         const effectiveExpense = isSplitExpense ? myShare : finalAmount;
-        const totalAmount = req.body.totalAmount !== undefined && req.body.totalAmount !== null
-            ? round2(parseFloat(req.body.totalAmount))
+
+        const rawTotalAmount = req.body.totalAmount !== undefined && req.body.totalAmount !== null ? parseFloat(req.body.totalAmount) : null;
+        const totalAmount = rawTotalAmount !== null && Number.isFinite(rawTotalAmount)
+            ? round2(rawTotalAmount)
             : (finalAmount > effectiveExpense ? finalAmount : round2(effectiveExpense + (req.body.lentAmount ? parseFloat(req.body.lentAmount) : 0)));
-        const lentAmount = req.body.lentAmount !== undefined && req.body.lentAmount !== null
-            ? round2(parseFloat(req.body.lentAmount))
+
+        const rawLent = req.body.lentAmount !== undefined && req.body.lentAmount !== null ? parseFloat(req.body.lentAmount) : null;
+        const lentAmount = rawLent !== null && Number.isFinite(rawLent)
+            ? round2(rawLent)
             : (isSplitExpense ? round2(Math.max(0, totalAmount - effectiveExpense)) : null);
         const splitWith = req.body.splitWith ? String(req.body.splitWith).trim() : null;
 
-        const transactionRef = await db.collection('transactions').add({
-            familyId,
-            createdBy: userId,
-            createdByName: userName,
-            amount: type === 'expense' ? effectiveExpense : finalAmount,
-            type,
-            category,
-            description: description || '',
-            paymentMethod: paymentMethod || null,
-            source: source || 'manual',
-            dedupeKey: dedupeKey || null,
-            countForNextMonth: Boolean(req.body.countForNextMonth),
-            isSplit,
-            totalAmount: isSplitExpense ? totalAmount : null,
-            myShare: isSplitExpense ? myShare : null,
-            lentAmount: isSplitExpense ? lentAmount : null,
-            splitWith: isSplitExpense ? splitWith : null,
-            keywords,
-            date: txDate,
-            createdAt: new Date(),
-        });
+        // Deterministic document ID if dedupeKey is provided to prevent TOCTOU race condition atomically
+        const txDocId = dedupeKey
+            ? 'tx_' + crypto.createHash('sha256').update(`${familyId}_${dedupeKey}`).digest('hex')
+            : null;
+        const transactionRef = txDocId ? db.collection('transactions').doc(txDocId) : db.collection('transactions').doc();
 
-        // When expense is marked as split, only myShare is considered as expense
+        // Check if any existing transaction has this dedupeKey in this family (backward compatibility)
+        if (dedupeKey) {
+            const duplicate = await db.collection('transactions')
+                .where('familyId', '==', familyId)
+                .where('dedupeKey', '==', dedupeKey)
+                .limit(1)
+                .get();
+            if (!duplicate.empty) throw new HttpError(409, 'Duplicate transaction');
+        }
+
         const delta = type === 'income' ? finalAmount : -effectiveExpense;
-        await updateFamilyBalance(familyId, userId, delta);
+        const familyRef = db.collection('families').doc(familyId);
 
         if (type === 'expense' && isSplit && lentAmount && lentAmount > 0) {
             const person = splitWith || 'Friends';
             const due = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
             const splitNote = description ? `${description} (Split expense)` : 'Split expense';
-            const loanRef = await db.collection('loans').add({
-                familyId,
-                direction: 'lent',
-                person,
-                amount: lentAmount,
-                repaidAmount: 0,
-                dueDate: due,
-                note: splitNote,
-                status: 'open',
-                isSplitLoan: true,
-                sourceTxId: transactionRef.id,
-                createdBy: userId,
-                createdAt: new Date(),
-                settledAt: null,
+            const loanRef = db.collection('loans').doc();
+
+            await db.runTransaction(async (t) => {
+                const txSnap = await t.get(transactionRef);
+                if (txSnap.exists) {
+                    throw new HttpError(409, 'Duplicate transaction');
+                }
+                const fDoc = await t.get(familyRef);
+                if (!fDoc.exists) throw new HttpError(404, 'Family not found');
+
+                const fData = fDoc.data();
+                const curBalance = typeof fData.balance === 'number' && Number.isFinite(fData.balance) ? fData.balance : 0;
+                const mBalances = fData.memberBalances && typeof fData.memberBalances === 'object' ? { ...fData.memberBalances } : {};
+                const curMember = typeof mBalances[userId] === 'number' && Number.isFinite(mBalances[userId]) ? mBalances[userId] : 0;
+
+                t.set(transactionRef, {
+                    familyId,
+                    createdBy: userId,
+                    createdByName: userName,
+                    amount: effectiveExpense,
+                    type,
+                    category,
+                    description: description || '',
+                    paymentMethod: paymentMethod || null,
+                    source: source || 'manual',
+                    dedupeKey: dedupeKey || null,
+                    countForNextMonth: Boolean(req.body.countForNextMonth),
+                    isSplit,
+                    totalAmount: totalAmount,
+                    myShare: myShare,
+                    lentAmount: lentAmount,
+                    splitWith: splitWith,
+                    linkedLoanId: loanRef.id,
+                    keywords,
+                    date: txDate,
+                    createdAt: new Date(),
+                });
+
+                t.set(loanRef, {
+                    familyId,
+                    direction: 'lent',
+                    person,
+                    amount: lentAmount,
+                    repaidAmount: 0,
+                    dueDate: due,
+                    note: splitNote,
+                    status: 'open',
+                    isSplitLoan: true,
+                    sourceTxId: transactionRef.id,
+                    createdBy: userId,
+                    createdAt: new Date(),
+                    settledAt: null,
+                });
+
+                mBalances[userId] = round2(curMember + delta);
+                t.update(familyRef, {
+                    balance: round2(curBalance + delta),
+                    memberBalances: mBalances,
+                    updatedAt: new Date(),
+                });
             });
-            await transactionRef.update({ linkedLoanId: loanRef.id });
+        } else {
+            await db.runTransaction(async (t) => {
+                const txSnap = await t.get(transactionRef);
+                if (txSnap.exists) {
+                    throw new HttpError(409, 'Duplicate transaction');
+                }
+                const fDoc = await t.get(familyRef);
+                if (!fDoc.exists) throw new HttpError(404, 'Family not found');
+
+                const fData = fDoc.data();
+                const curBalance = typeof fData.balance === 'number' && Number.isFinite(fData.balance) ? fData.balance : 0;
+                const mBalances = fData.memberBalances && typeof fData.memberBalances === 'object' ? { ...fData.memberBalances } : {};
+                const curMember = typeof mBalances[userId] === 'number' && Number.isFinite(mBalances[userId]) ? mBalances[userId] : 0;
+
+                t.set(transactionRef, {
+                    familyId,
+                    createdBy: userId,
+                    createdByName: userName,
+                    amount: type === 'expense' ? effectiveExpense : finalAmount,
+                    type,
+                    category,
+                    description: description || '',
+                    paymentMethod: paymentMethod || null,
+                    source: source || 'manual',
+                    dedupeKey: dedupeKey || null,
+                    countForNextMonth: Boolean(req.body.countForNextMonth),
+                    isSplit,
+                    totalAmount: isSplitExpense ? totalAmount : null,
+                    myShare: isSplitExpense ? myShare : null,
+                    lentAmount: isSplitExpense ? lentAmount : null,
+                    splitWith: isSplitExpense ? splitWith : null,
+                    keywords,
+                    date: txDate,
+                    createdAt: new Date(),
+                });
+
+                mBalances[userId] = round2(curMember + delta);
+                t.update(familyRef, {
+                    balance: round2(curBalance + delta),
+                    memberBalances: mBalances,
+                    updatedAt: new Date(),
+                });
+            });
         }
 
         res.status(201).json({ id: transactionRef.id });
@@ -131,7 +213,7 @@ exports.addBatchTransactions = async (req, res, next) => {
         const userName = userDoc.exists ? userDoc.data().displayName : null;
 
         // Fetch existing dedupe keys to avoid duplicates
-        const dedupeKeys = items.map((it) => it.dedupeKey).filter(Boolean);
+        const dedupeKeys = items.map((it) => it && it.dedupeKey).filter(Boolean);
         const existingKeys = new Set();
 
         if (dedupeKeys.length > 0) {
@@ -152,23 +234,50 @@ exports.addBatchTransactions = async (req, res, next) => {
         const createdIds = [];
 
         for (const item of items) {
+            if (!item || typeof item !== 'object') {
+                skippedCount++;
+                continue;
+            }
+
             if (item.dedupeKey && existingKeys.has(item.dedupeKey)) {
                 skippedCount++;
                 continue;
             }
 
             const parsedAmount = parseFloat(item.amount);
-            if (isNaN(parsedAmount) || parsedAmount <= 0) {
+            if (isNaN(parsedAmount) || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
                 skippedCount++;
                 continue;
             }
 
-            const finalAmount = round2(parsedAmount);
             const isSplitItem = Boolean(item.isSplit);
-            const myShareItem = item.myShare !== undefined && item.myShare !== null ? round2(parseFloat(item.myShare)) : null;
-            const effExpense = (item.type === 'expense' && isSplitItem && typeof myShareItem === 'number') ? myShareItem : finalAmount;
-            const delta = item.type === 'income' ? finalAmount : -effExpense;
-            totalDelta += delta;
+            let myShareItem = null;
+            if (item.myShare !== undefined && item.myShare !== null) {
+                const parsedShare = parseFloat(item.myShare);
+                if (isNaN(parsedShare) || !Number.isFinite(parsedShare) || parsedShare < 0) {
+                    skippedCount++;
+                    continue;
+                }
+                myShareItem = round2(parsedShare);
+            }
+
+            let lentAmountItem = null;
+            if (item.lentAmount !== undefined && item.lentAmount !== null) {
+                const parsedLent = parseFloat(item.lentAmount);
+                if (isNaN(parsedLent) || !Number.isFinite(parsedLent) || parsedLent < 0) {
+                    skippedCount++;
+                    continue;
+                }
+                lentAmountItem = round2(parsedLent);
+            }
+
+            const finalAmount = round2(parsedAmount);
+            const itemType = item.type === 'income' ? 'income' : 'expense';
+            const effExpense = (itemType === 'expense' && isSplitItem && typeof myShareItem === 'number' && myShareItem > 0)
+                ? myShareItem
+                : finalAmount;
+            const delta = itemType === 'income' ? finalAmount : -effExpense;
+            totalDelta = round2(totalDelta + delta);
 
             let txDate = new Date();
             if (item.date) {
@@ -177,23 +286,26 @@ exports.addBatchTransactions = async (req, res, next) => {
             }
 
             const keywords = buildKeywords(item.description, item.category, item.paymentMethod, userName);
-            const ref = db.collection('transactions').doc();
+            const txDocId = item.dedupeKey
+                ? 'tx_' + crypto.createHash('sha256').update(`${familyId}_${item.dedupeKey}`).digest('hex')
+                : null;
+            const ref = txDocId ? db.collection('transactions').doc(txDocId) : db.collection('transactions').doc();
 
             batch.set(ref, {
                 familyId,
                 createdBy: userId,
                 createdByName: userName,
-                amount: finalAmount,
-                type: item.type === 'income' ? 'income' : 'expense',
+                amount: itemType === 'expense' ? effExpense : finalAmount,
+                type: itemType,
                 category: item.category || 'Other',
                 description: (item.description || '').trim(),
                 paymentMethod: item.paymentMethod || null,
                 source: item.source || 'sms',
                 dedupeKey: item.dedupeKey || null,
                 countForNextMonth: Boolean(item.countForNextMonth),
-                isSplit: Boolean(item.isSplit),
-                myShare: item.myShare !== undefined && item.myShare !== null ? round2(parseFloat(item.myShare)) : null,
-                lentAmount: item.lentAmount !== undefined && item.lentAmount !== null ? round2(parseFloat(item.lentAmount)) : null,
+                isSplit: isSplitItem,
+                myShare: myShareItem,
+                lentAmount: lentAmountItem,
                 splitWith: item.splitWith ? String(item.splitWith).trim() : null,
                 keywords,
                 date: txDate,
@@ -225,9 +337,10 @@ exports.deleteBatchTransactions = async (req, res, next) => {
             throw new HttpError(400, 'ids must be a non-empty array');
         }
 
-        await getFamilyForMember(familyId, userId);
+        const family = await getFamilyForMember(familyId, userId);
+        const isAdmin = family.admin === userId;
 
-        let totalDelta = 0;
+        const memberDeltas = {};
         let deletedCount = 0;
         const batch = db.batch();
 
@@ -239,16 +352,35 @@ exports.deleteBatchTransactions = async (req, res, next) => {
             const data = docSnap.data();
             if (data.familyId !== familyId) continue;
 
+            // Enforce authorization: only creator or family admin can delete
+            if (data.createdBy !== userId && !isAdmin) {
+                throw new HttpError(403, 'You can only delete transactions you created unless you are family admin');
+            }
+
+            const creator = data.createdBy || userId;
             const effExpense = getEffectiveExpense(data);
             const delta = data.type === 'income' ? -data.amount : effExpense;
-            totalDelta += delta;
+            memberDeltas[creator] = round2((memberDeltas[creator] || 0) + delta);
             deletedCount++;
+
+            // Clean up linked loan if present and unrepaid
+            if (data.linkedLoanId) {
+                try {
+                    const loanSnap = await db.collection('loans').doc(data.linkedLoanId).get();
+                    if (loanSnap.exists && (loanSnap.data().repaidAmount || 0) === 0) {
+                        batch.delete(loanSnap.ref);
+                    }
+                } catch (e) {
+                    console.warn('Delete linked loan error in batch delete:', e);
+                }
+            }
+
             batch.delete(docRef);
         }
 
         if (deletedCount > 0) {
             await batch.commit();
-            await updateFamilyBalance(familyId, userId, round2(totalDelta));
+            await updateFamilyBalances(familyId, memberDeltas);
         }
 
         res.status(200).json({ message: `Reverted ${deletedCount} transaction${deletedCount === 1 ? '' : 's'}`, deleted: deletedCount });
@@ -262,18 +394,24 @@ exports.deleteAllSmsTransactions = async (req, res, next) => {
         const { familyId } = req.params;
         const userId = req.user.uid;
 
-        await getFamilyForMember(familyId, userId);
+        const family = await getFamilyForMember(familyId, userId);
+        const isAdmin = family.admin === userId;
 
-        const snap = await db.collection('transactions')
+        let query = db.collection('transactions')
             .where('familyId', '==', familyId)
-            .where('source', '==', 'sms')
-            .get();
+            .where('source', '==', 'sms');
 
+        // If not admin, restrict deletion exclusively to user's own SMS transactions
+        if (!isAdmin) {
+            query = query.where('createdBy', '==', userId);
+        }
+
+        const snap = await query.get();
         if (snap.empty) {
             return res.status(200).json({ message: 'No SMS transactions found', deleted: 0 });
         }
 
-        let totalDelta = 0;
+        const memberDeltas = {};
         let deletedCount = 0;
         const docs = snap.docs;
 
@@ -282,17 +420,31 @@ exports.deleteAllSmsTransactions = async (req, res, next) => {
             const batch = db.batch();
             for (const doc of chunk) {
                 const data = doc.data();
+                const creator = data.createdBy || userId;
                 const effExpense = getEffectiveExpense(data);
-            const delta = data.type === 'income' ? -data.amount : effExpense;
-                totalDelta += delta;
+                const delta = data.type === 'income' ? -data.amount : effExpense;
+                memberDeltas[creator] = round2((memberDeltas[creator] || 0) + delta);
                 deletedCount++;
+
+                // Clean up any linked loan if unrepaid
+                if (data.linkedLoanId) {
+                    try {
+                        const loanSnap = await db.collection('loans').doc(data.linkedLoanId).get();
+                        if (loanSnap.exists && (loanSnap.data().repaidAmount || 0) === 0) {
+                            batch.delete(loanSnap.ref);
+                        }
+                    } catch (e) {
+                        console.warn('Delete linked loan error in delete SMS:', e);
+                    }
+                }
+
                 batch.delete(doc.ref);
             }
             await batch.commit();
         }
 
         if (deletedCount > 0) {
-            await updateFamilyBalance(familyId, userId, round2(totalDelta));
+            await updateFamilyBalances(familyId, memberDeltas);
         }
 
         res.status(200).json({ message: `Deleted ${deletedCount} SMS transaction${deletedCount === 1 ? '' : 's'}`, deleted: deletedCount });

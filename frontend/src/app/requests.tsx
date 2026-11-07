@@ -2,7 +2,7 @@ import { Check, UserCheck, X } from 'lucide-react-native';
 import { useState } from 'react';
 import { View } from 'react-native';
 import { Header } from '@/components/Header';
-import { Avatar, Empty, ErrorBanner, Glass, IconButton, Loading, Reveal, Screen, T } from '@/components/ui';
+import { Avatar, Empty, ErrorBanner, Glass, IconButton, Loading, Reveal, Screen, Skeleton, T } from '@/components/ui';
 import { colors, space } from '@/constants/theme';
 import { useAuth, useFamilyId } from '@/context/auth';
 import { useAsync } from '@/hooks/useAsync';
@@ -30,7 +30,21 @@ export default function Requests() {
         <Screen refreshing={refreshing} onRefresh={pullToRefresh}>
             <Header title="Join requests" />
             <ErrorBanner message={error ?? actionError} onRetry={reload} />
-            {loading && !data ? <Loading /> : null}
+            {loading && !data ? (
+                <View style={{ gap: 12 }}>
+                    {[0, 1].map((i) => (
+                        <Glass key={i} strong style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+                            <Skeleton width={42} height={42} radius={21} />
+                            <View style={{ flex: 1, gap: 6 }}>
+                                <Skeleton width="50%" height={16} />
+                                <Skeleton width="70%" height={12} />
+                            </View>
+                            <Skeleton width={42} height={42} radius={21} />
+                            <Skeleton width={42} height={42} radius={21} />
+                        </Glass>
+                    ))}
+                </View>
+            ) : null}
             {data && data.length === 0 ? <Empty Icon={UserCheck} title="No one is waiting" hint="Share your invite code and requests show up here." /> : null}
 
             <View style={{ gap: 12 }}>
