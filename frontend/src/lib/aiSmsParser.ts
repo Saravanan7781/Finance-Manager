@@ -158,6 +158,7 @@ export interface ExtractedAiItem {
     category: string;
     merchant: string | null;
     paymentMethod: 'UPI' | 'Card' | 'Bank';
+    date?: string | null;
     countForNextMonth?: boolean;
 }
 
@@ -197,6 +198,7 @@ For each message, extract:
 - category (one of: 'Food', 'Groceries', 'Travel', 'Fuel', 'Bills', 'Entertainment', 'Health', 'Clothes and Shoes', 'Rent', 'Education', 'Sport', 'Salary', 'Interest', 'Business', 'Other')
 - merchant (clean merchant or entity name, or null)
 - paymentMethod ('UPI', 'Card', or 'Bank')
+- date (transaction date in 'YYYY-MM-DD' format if mentioned in the message text like '01-Nov-26' -> '2026-11-01', '30-Oct-26' -> '2026-10-30', '02/11/2026' -> '2026-11-02'. If 2-digit year like '26' or '24', expand to 20XX. If year is omitted, assume current year 2026. If no date is mentioned in the SMS, return null)
 - countForNextMonth (boolean: true if category is 'Salary' and credited near end of month or for next month's cycle, otherwise false)
 
 Return ONLY valid JSON matching this exact structure:
@@ -209,6 +211,7 @@ Return ONLY valid JSON matching this exact structure:
       "category": "Food",
       "merchant": "Swiggy",
       "paymentMethod": "UPI",
+      "date": "2026-11-01",
       "countForNextMonth": false
     }
   ]
@@ -334,6 +337,7 @@ async function callAiApi(
                     category: item.category || 'Other',
                     merchant: item.merchant || null,
                     paymentMethod: ['UPI', 'Card', 'Bank'].includes(item.paymentMethod) ? item.paymentMethod : 'Bank',
+                    date: item.date && /^\d{4}-\d{2}-\d{2}$/.test(String(item.date).trim()) ? String(item.date).trim() : null,
                     countForNextMonth: Boolean(item.countForNextMonth),
                 });
             }
@@ -360,7 +364,7 @@ export async function aiParseSingleSms(text: string, dateTimestamp?: number): Pr
             if (aiItem && aiItem.amount > 0) {
                 const local = localHeuristicAiParser(trimmed, dateTimestamp);
                 const dedupeKey = local?.dedupeKey || `sms-${hash(trimmed)}-${aiItem.amount}`;
-                const parsedDate = local?.date || (dateTimestamp ? new Date(dateTimestamp).toISOString() : new Date().toISOString());
+                const parsedDate = aiItem.date || local?.date || (dateTimestamp ? new Date(dateTimestamp).toISOString() : new Date().toISOString());
 
                 return {
                     amount: aiItem.amount,
@@ -470,7 +474,7 @@ export async function aiExtractBulkSms(
         const paymentMethod = aiItem?.paymentMethod ?? localParsed?.paymentMethod ?? 'Bank';
         const countForNextMonth = aiItem?.countForNextMonth ?? localParsed?.countForNextMonth ?? false;
 
-        const parsedDate = localParsed?.date || (item.date ? new Date(item.date).toISOString() : new Date().toISOString());
+        const parsedDate = aiItem?.date || localParsed?.date || (item.date ? new Date(item.date).toISOString() : new Date().toISOString());
         const dedupeKey = localParsed?.dedupeKey || `sms-${hash(item.text)}-${amount}`;
 
         const finalParsed: ParsedSms = {

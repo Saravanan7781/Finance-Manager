@@ -87,6 +87,38 @@ export const extractMerchantFromSms = (text: string, isDebit: boolean): string |
     return null;
 };
 
+const MONTH_MAP: Record<string, string> = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+};
+
+export const extractDateFromSms = (text: string): string | null => {
+    // 1. Matches DD-MMM-YY or DD-MMM-YYYY (e.g. 01-Nov-26, 30-Oct-2026, 05 Nov 26)
+    const m1 = /\b(\d{1,2})[-/\s]([A-Za-z]{3})[-/\s](\d{2,4})\b/i.exec(text);
+    if (m1) {
+        const d = m1[1].padStart(2, '0');
+        const mon = MONTH_MAP[m1[2].toLowerCase()];
+        let y = m1[3];
+        if (y.length === 2) y = `20${y}`;
+        if (mon) return `${y}-${mon}-${d}`;
+    }
+
+    // 2. Matches DD/MM/YYYY or DD-MM-YYYY (e.g. 02/11/2026)
+    const m2 = /\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/.exec(text);
+    if (m2) {
+        const d = m2[1].padStart(2, '0');
+        const m = m2[2].padStart(2, '0');
+        let y = m2[3];
+        if (y.length === 2) y = `20${y}`;
+        const monthNum = parseInt(m, 10);
+        if (monthNum >= 1 && monthNum <= 12) {
+            return `${y}-${m}-${d}`;
+        }
+    }
+
+    return null;
+};
+
 export const parseBankSms = (raw: string, smsDate?: number): ParsedSms | null => {
     const text = raw.replace(/\s+/g, ' ').trim();
     const amountMatch = AMOUNT.exec(text);
@@ -110,6 +142,11 @@ export const parseBankSms = (raw: string, smsDate?: number): ParsedSms | null =>
     let parsedDate: string | undefined;
     if (smsDate && smsDate > 0) {
         parsedDate = new Date(smsDate).toISOString();
+    } else {
+        const extracted = extractDateFromSms(text);
+        if (extracted) {
+            parsedDate = extracted;
+        }
     }
 
     return {

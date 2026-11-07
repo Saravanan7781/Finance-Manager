@@ -86,17 +86,28 @@ export default function AddTransaction() {
             setAmount(formatAmountInput(String(parsed.amount)));
             if (parsed.category) setCategory(normalizeCategory(parsed.category));
             if (parsed.merchant) setDescription(parsed.merchant);
+
+            let effectiveDateStr = dateText;
+            if (parsed.date) {
+                if (/^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) {
+                    effectiveDateStr = parsed.date;
+                    setDateText(parsed.date);
+                } else {
+                    const d = new Date(parsed.date);
+                    if (!isNaN(d.getTime())) {
+                        effectiveDateStr = toDateInput(d);
+                        setDateText(effectiveDateStr);
+                    }
+                }
+            }
+
             if (parsed.countForNextMonth !== undefined) {
                 setCountForNextMonth(Boolean(parsed.countForNextMonth));
             } else if (parsed.category === 'Salary') {
-                const parsedDate = fromDateInput(dateText);
+                const parsedDate = fromDateInput(effectiveDateStr);
                 if (parsedDate && parsedDate.getDate() >= 23) setCountForNextMonth(true);
             }
             if (parsed.paymentMethod) setMethod(parsed.paymentMethod);
-            if (parsed.date) {
-                const d = new Date(parsed.date);
-                if (!isNaN(d.getTime())) setDateText(toDateInput(d));
-            }
             setDedupeKey(parsed.dedupeKey);
             setSource('sms');
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
