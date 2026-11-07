@@ -10,6 +10,7 @@ import {
     Dimensions,
     useWindowDimensions,
     Easing,
+    Keyboard,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -153,7 +154,7 @@ export function Screen({
     onRefresh,
     bottomInset = 0,
     contentStyle,
-    keyboard = false,
+    keyboard = true,
 }: ScreenProps) {
     const insets = useSafeAreaInsets();
     const padding = { paddingTop: insets.top + space.md, paddingBottom: insets.bottom + space.xl + bottomInset };
@@ -164,6 +165,7 @@ export function Screen({
             contentContainerStyle={[styles.scrollContent, padding, contentStyle]}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             refreshControl={
                 onRefresh ? (
                     <RefreshControl
@@ -181,7 +183,10 @@ export function Screen({
     );
 
     const content = keyboard ? (
-        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView
+            style={styles.flex}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
             {body}
         </KeyboardAvoidingView>
     ) : (
@@ -636,13 +641,38 @@ export function Sheet({
 }) {
     const insets = useSafeAreaInsets();
     const { height: windowHeight } = useWindowDimensions();
-    const maxSheetHeight = Math.min(windowHeight * 0.88, 720);
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+    useEffect(() => {
+        if (!visible) {
+            setKeyboardHeight(0);
+            return;
+        }
+        const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+        const showSub = Keyboard.addListener(showEvent, (e) => {
+            setKeyboardHeight(e.endCoordinates.height);
+        });
+        const hideSub = Keyboard.addListener(hideEvent, () => {
+            setKeyboardHeight(0);
+        });
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, [visible]);
+
+    const availableHeight = keyboardHeight > 0 ? Math.max(windowHeight - keyboardHeight - insets.top, 260) : windowHeight;
+    const maxSheetHeight = Math.min(availableHeight * 0.88, 720);
 
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-            <KeyboardAvoidingView style={styles.sheetRoot} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <KeyboardAvoidingView
+                style={styles.sheetRoot}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            >
                 <Pressable style={styles.sheetBackdrop} onPress={onClose} accessibilityLabel="Close" />
-                <View style={[styles.sheet, { maxHeight: maxSheetHeight, paddingBottom: insets.bottom + space.md }]}>
+                <View style={[styles.sheet, { maxHeight: maxSheetHeight, paddingBottom: keyboardHeight > 0 ? space.md : insets.bottom + space.md }]}>
                     <View style={styles.sheetHandle} />
                     <T variant="title" style={{ marginBottom: space.md }}>
                         {title}
@@ -651,6 +681,7 @@ export function Sheet({
                         style={{ flexShrink: 1, flexGrow: 0 }}
                         showsVerticalScrollIndicator={true}
                         keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode="on-drag"
                         contentContainerStyle={{ flexGrow: 1, paddingBottom: space.xl }}
                         bounces={false}
                         nestedScrollEnabled

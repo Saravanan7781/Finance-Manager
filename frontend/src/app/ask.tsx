@@ -1,7 +1,8 @@
 import { ArrowUp, KeyRound, Sparkles } from 'lucide-react-native';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
+    Keyboard,
     KeyboardAvoidingView,
     Platform,
     Pressable,
@@ -55,6 +56,23 @@ export default function Ask() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [draft, setDraft] = useState('');
     const [isTyping, setIsTyping] = useState(false);
+    const [keyboardOpen, setKeyboardOpen] = useState(false);
+
+    useEffect(() => {
+        const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+        const sub1 = Keyboard.addListener(showEvent, () => {
+            setKeyboardOpen(true);
+            setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 100);
+        });
+        const sub2 = Keyboard.addListener(hideEvent, () => {
+            setKeyboardOpen(false);
+        });
+        return () => {
+            sub1.remove();
+            sub2.remove();
+        };
+    }, []);
 
     const { data, loading, error, reload } = useAsync(async () => {
         const [summary, loans, goals, budgets] = await Promise.all([
@@ -96,7 +114,7 @@ export default function Ask() {
     const aiActive = isAiApiConfigured();
 
     return (
-        <Screen variant="ember" scroll={false} contentStyle={{ paddingBottom: 0 }}>
+        <Screen variant="ember" scroll={false} contentStyle={{ paddingBottom: 0 }} keyboard={false}>
             <View style={{ paddingHorizontal: space.lg }}>
                 <Header
                     close
@@ -105,12 +123,16 @@ export default function Ask() {
                 />
             </View>
 
-            <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <KeyboardAvoidingView
+                style={{ flex: 1 }}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            >
                 <ScrollView
                     ref={scroller}
                     style={{ flex: 1 }}
                     contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: space.lg, flexGrow: 1 }}
                     keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
                     showsVerticalScrollIndicator={false}
                 >
                     <ErrorBanner message={error} onRetry={reload} />
@@ -190,7 +212,7 @@ export default function Ask() {
                     )}
                 </ScrollView>
 
-                <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+                <View style={[styles.inputBar, { paddingBottom: keyboardOpen ? 12 : Math.max(insets.bottom, 12) }]}>
                     <TextInput
                         accessibilityLabel="Ask a question"
                         value={draft}
