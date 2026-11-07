@@ -380,7 +380,7 @@ export default function Activity() {
                                             params: {
                                                 id: tx.id,
                                                 type: tx.type,
-                                                amount: String(tx.amount),
+                                                amount: String(tx.totalAmount ?? (tx.isSplit && tx.lentAmount ? tx.amount + tx.lentAmount : tx.amount)),
                                                 category: tx.category,
                                                 description: tx.description || '',
                                                 paymentMethod: tx.paymentMethod || '',

@@ -134,21 +134,22 @@ const summary = (month: string, tz: number, scope: 'family' | 'me' = 'family'): 
         if (scope === 'me' && t.createdBy !== ME) return;
         const at = new Date(t.date).getTime();
         const isExpense = t.type === 'expense';
-        if (isExpense) allExpense += t.amount; else allIncome += t.amount;
-        if (isExpense && at >= prev.start && at < prev.end) previousExpense += t.amount;
+        const effExpense = (isExpense && t.isSplit && typeof t.myShare === 'number') ? t.myShare : t.amount;
+        if (isExpense) allExpense += effExpense; else allIncome += t.amount;
+        if (isExpense && at >= prev.start && at < prev.end) previousExpense += effExpense;
         if (at < cur.start || at >= cur.end) return;
 
         count += 1;
         const day = new Date(at + tz * 60000).toISOString().slice(0, 10);
         byDay[day] = byDay[day] || { date: day, income: 0, expense: 0 };
         if (isExpense) {
-            expense += t.amount;
-            byDay[day].expense += t.amount;
+            expense += effExpense;
+            byDay[day].expense += effExpense;
             byCategory[t.category] = byCategory[t.category] || { category: t.category, total: 0, count: 0 };
-            byCategory[t.category].total += t.amount;
+            byCategory[t.category].total += effExpense;
             byCategory[t.category].count += 1;
             byMember[t.createdBy] = byMember[t.createdBy] || { userId: t.createdBy, name: t.createdByName || 'Member', expense: 0 };
-            byMember[t.createdBy].expense += t.amount;
+            byMember[t.createdBy].expense += effExpense;
         } else {
             income += t.amount;
             byDay[day].income += t.amount;
@@ -222,8 +223,9 @@ const trend = (range: TrendRange, tz: number, scope: SummaryScope, single = fals
         const bucket = buckets.find((b) => at >= Date.parse(b.start) && at < Date.parse(b.end));
         if (!bucket) return;
         if (t.type === 'expense') {
-            bucket.expense = round2(bucket.expense + t.amount);
-            cats[t.category] = (cats[t.category] || 0) + t.amount;
+            const effExpense = (t.isSplit && typeof t.myShare === 'number') ? t.myShare : t.amount;
+            bucket.expense = round2(bucket.expense + effExpense);
+            cats[t.category] = (cats[t.category] || 0) + effExpense;
         } else {
             bucket.income = round2(bucket.income + t.amount);
         }
@@ -336,19 +338,48 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
             }
 
             if (method === 'POST') {
+                const isSplit = Boolean(body.isSplit);
+                const myShare = body.myShare ?? null;
+                const isSplitExpense = body.type === 'expense' && isSplit && typeof myShare === 'number' && myShare > 0;
+                const txAmount = isSplitExpense ? myShare : body.amount;
+                const totalAmount = body.totalAmount ?? (body.amount > txAmount ? body.amount : (isSplitExpense ? txAmount + (body.lentAmount ?? 0) : null));
+                const lentAmount = body.lentAmount ?? (isSplitExpense && totalAmount ? totalAmount - txAmount : null);
+
                 const tx: Tx = {
                     id: id('t'), familyId: FAMILY, createdBy: ME, createdByName: displayName,
-                    amount: body.amount, type: body.type, category: body.category, description: body.description || '',
+                    amount: txAmount, type: body.type, category: body.category, description: body.description || '',
                     paymentMethod: body.paymentMethod || null, source: body.source || 'manual',
                     countForNextMonth: Boolean(body.countForNextMonth),
-                    isSplit: Boolean(body.isSplit),
-                    myShare: body.myShare ?? null,
-                    lentAmount: body.lentAmount ?? null,
+                    isSplit,
+                    totalAmount,
+                    myShare: isSplitExpense ? myShare : null,
+                    lentAmount: isSplitExpense ? lentAmount : null,
                     splitWith: body.splitWith ?? null,
                     date: body.date || new Date().toISOString(), createdAt: new Date().toISOString(),
                 };
                 if (body.dedupeKey && txs.some((t) => (t as any).dedupeKey === body.dedupeKey)) throw new ApiError('Duplicate transaction', 409);
                 (tx as any).dedupeKey = body.dedupeKey || null;
+
+                if (isSplitExpense && lentAmount && lentAmount > 0) {
+                    const l: Loan = {
+                        id: id('l'),
+                        familyId: FAMILY,
+                        direction: 'lent',
+                        person: body.splitWith || 'Friends',
+                        amount: lentAmount,
+                        repaidAmount: 0,
+                        dueDate: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+                        note: body.description ? `${body.description} (Split expense)` : 'Split expense',
+                        status: 'open',
+                        isSplitLoan: true,
+                        sourceTxId: tx.id,
+                        createdAt: new Date().toISOString(),
+                        settledAt: null,
+                    };
+                    loans.unshift(l);
+                    tx.linkedLoanId = l.id;
+                }
+
                 txs.unshift(tx);
                 return { id: tx.id };
             }
@@ -471,7 +502,7 @@ export async function demoRequest(method: string, rawPath: string, body: any): P
                 loan.status = loan.repaidAmount >= loan.amount ? 'settled' : 'open';
                 loan.settledAt = loan.status === 'settled' ? new Date().toISOString() : null;
 
-                if (body.recordTransaction && payment > 0) {
+                if (body.recordTransaction && payment > 0 && !loan.isSplitLoan) {
                     const isLent = loan.direction === 'lent';
                     txs.unshift({
                         id: id('t'),

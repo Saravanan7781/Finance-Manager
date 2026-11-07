@@ -91,9 +91,9 @@ export function TxRow({ tx, onPress, showTime = false, flat = false }: { tx: Tx;
                     {income ? '+' : '-'}
                     {money(tx.type === 'expense' && tx.isSplit && typeof tx.myShare === 'number' ? tx.myShare : tx.amount)}
                 </T>
-                {tx.isSplit && tx.myShare !== undefined && tx.myShare !== null ? (
+                {tx.isSplit ? (
                     <T variant="tiny" color={colors.inkSoft} style={{ fontFamily: fonts.semibold, fontSize: 11, marginTop: 1 }}>
-                        Total {money(tx.amount)}
+                        Total {money(tx.totalAmount ?? (tx.myShare && tx.amount === tx.myShare && tx.lentAmount ? tx.amount + tx.lentAmount : tx.amount))}
                     </T>
                 ) : null}
             </View>

@@ -877,6 +877,8 @@ test('transactions: split expense persists isSplit, myShare, lentAmount, splitWi
     const found = list.body.find((t) => t.id === splitTx.body.id);
     assert.ok(found);
     assert.equal(found.isSplit, true);
+    assert.equal(found.amount, 100); // Expense transaction only records the user's share!
+    assert.equal(found.totalAmount, 300); // Total bill preserved
     assert.equal(found.myShare, 100);
     assert.equal(found.lentAmount, 200);
     assert.equal(found.splitWith, 'Friends');

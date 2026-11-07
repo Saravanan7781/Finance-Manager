@@ -50,11 +50,23 @@ exports.addTransaction = async (req, res, next) => {
             if (!isNaN(parsedD.getTime())) txDate = parsedD;
         }
 
+        const isSplit = Boolean(req.body.isSplit);
+        const myShare = req.body.myShare !== undefined && req.body.myShare !== null ? round2(parseFloat(req.body.myShare)) : null;
+        const isSplitExpense = type === 'expense' && isSplit && typeof myShare === 'number' && myShare > 0;
+        const effectiveExpense = isSplitExpense ? myShare : finalAmount;
+        const totalAmount = req.body.totalAmount !== undefined && req.body.totalAmount !== null
+            ? round2(parseFloat(req.body.totalAmount))
+            : (finalAmount > effectiveExpense ? finalAmount : round2(effectiveExpense + (req.body.lentAmount ? parseFloat(req.body.lentAmount) : 0)));
+        const lentAmount = req.body.lentAmount !== undefined && req.body.lentAmount !== null
+            ? round2(parseFloat(req.body.lentAmount))
+            : (isSplitExpense ? round2(Math.max(0, totalAmount - effectiveExpense)) : null);
+        const splitWith = req.body.splitWith ? String(req.body.splitWith).trim() : null;
+
         const transactionRef = await db.collection('transactions').add({
             familyId,
             createdBy: userId,
             createdByName: userName,
-            amount: finalAmount,
+            amount: type === 'expense' ? effectiveExpense : finalAmount,
             type,
             category,
             description: description || '',
@@ -62,27 +74,19 @@ exports.addTransaction = async (req, res, next) => {
             source: source || 'manual',
             dedupeKey: dedupeKey || null,
             countForNextMonth: Boolean(req.body.countForNextMonth),
-            isSplit: Boolean(req.body.isSplit),
-            myShare: req.body.myShare !== undefined && req.body.myShare !== null ? round2(parseFloat(req.body.myShare)) : null,
-            lentAmount: req.body.lentAmount !== undefined && req.body.lentAmount !== null ? round2(parseFloat(req.body.lentAmount)) : null,
-            splitWith: req.body.splitWith ? String(req.body.splitWith).trim() : null,
+            isSplit,
+            totalAmount: isSplitExpense ? totalAmount : null,
+            myShare: isSplitExpense ? myShare : null,
+            lentAmount: isSplitExpense ? lentAmount : null,
+            splitWith: isSplitExpense ? splitWith : null,
             keywords,
             date: txDate,
             createdAt: new Date(),
         });
 
         // When expense is marked as split, only myShare is considered as expense
-        const effectiveExpense = (type === 'expense' && Boolean(req.body.isSplit) && typeof req.body.myShare === 'number')
-            ? round2(parseFloat(req.body.myShare))
-            : finalAmount;
         const delta = type === 'income' ? finalAmount : -effectiveExpense;
         await updateFamilyBalance(familyId, userId, delta);
-
-        // Note split share in loans as lent
-        const isSplit = Boolean(req.body.isSplit);
-        const myShare = req.body.myShare !== undefined && req.body.myShare !== null ? round2(parseFloat(req.body.myShare)) : null;
-        const lentAmount = req.body.lentAmount !== undefined && req.body.lentAmount !== null ? round2(parseFloat(req.body.lentAmount)) : null;
-        const splitWith = req.body.splitWith ? String(req.body.splitWith).trim() : null;
 
         if (type === 'expense' && isSplit && lentAmount && lentAmount > 0) {
             const person = splitWith || 'Friends';
@@ -400,10 +404,24 @@ exports.updateTransaction = async (req, res, next) => {
         if (req.body.countForNextMonth !== undefined) {
             updates.countForNextMonth = Boolean(req.body.countForNextMonth);
         }
+        if (req.body.totalAmount !== undefined) updates.totalAmount = req.body.totalAmount !== null ? round2(parseFloat(req.body.totalAmount)) : null;
         if (req.body.isSplit !== undefined) updates.isSplit = Boolean(req.body.isSplit);
         if (req.body.myShare !== undefined) updates.myShare = req.body.myShare !== null ? round2(parseFloat(req.body.myShare)) : null;
         if (req.body.lentAmount !== undefined) updates.lentAmount = req.body.lentAmount !== null ? round2(parseFloat(req.body.lentAmount)) : null;
         if (req.body.splitWith !== undefined) updates.splitWith = req.body.splitWith ? String(req.body.splitWith).trim() : null;
+
+        if (updates.isSplit === false) {
+            updates.totalAmount = null;
+            updates.myShare = null;
+            updates.lentAmount = null;
+            updates.splitWith = null;
+        } else if ((updates.isSplit || oldT.isSplit) && (updates.myShare !== undefined || oldT.myShare)) {
+            const share = updates.myShare !== undefined ? updates.myShare : oldT.myShare;
+            const currentType = updates.type || oldT.type;
+            if (currentType === 'expense' && typeof share === 'number' && share > 0) {
+                updates.amount = share;
+            }
+        }
 
         if (Object.keys(updates).length === 0) throw new HttpError(400, 'Nothing to update');
         updates.updatedAt = new Date();

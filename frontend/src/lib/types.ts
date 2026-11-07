@@ -68,9 +68,11 @@ export interface Tx {
     date: string;
     countForNextMonth?: boolean;
     isSplit?: boolean;
+    totalAmount?: number | null;
     myShare?: number | null;
     lentAmount?: number | null;
     splitWith?: string | null;
+    linkedLoanId?: string | null;
     createdAt: string;
 }
 
@@ -86,6 +88,7 @@ export interface TxInput {
     dedupeKey?: string | null;
     countForNextMonth?: boolean;
     isSplit?: boolean;
+    totalAmount?: number | null;
     myShare?: number | null;
     lentAmount?: number | null;
     splitWith?: string | null;

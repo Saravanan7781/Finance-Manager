@@ -186,13 +186,14 @@ export default function AddTransaction() {
         setSuccess(null);
         try {
             const flagCountNext = (category === 'Salary' || type === 'income') ? countForNextMonth : false;
+            const txAmount = (type === 'expense' && splitActive && parsedMyShare) ? parsedMyShare : value;
             if (editing) {
                 if (params.date && toDateInput(new Date(params.date)) === dateText) {
                     const orig = new Date(params.date);
                     if (!isNaN(orig.getTime())) finalDate = orig;
                 }
                 await api.updateTransaction(editing, {
-                    amount: value,
+                    amount: txAmount,
                     type,
                     category,
                     description: description.trim(),
@@ -200,6 +201,7 @@ export default function AddTransaction() {
                     date: finalDate.toISOString(),
                     countForNextMonth: flagCountNext,
                     isSplit: splitActive,
+                    totalAmount: splitActive ? value : null,
                     myShare: splitActive ? parsedMyShare : null,
                     lentAmount: splitActive ? lentAmount : null,
                     splitWith: splitActive && splitWith.trim() ? splitWith.trim() : null,
@@ -208,7 +210,7 @@ export default function AddTransaction() {
             } else {
                 await api.addTransaction({
                     familyId,
-                    amount: value,
+                    amount: txAmount,
                     type,
                     category,
                     description: description.trim(),
@@ -218,6 +220,7 @@ export default function AddTransaction() {
                     dedupeKey,
                     countForNextMonth: flagCountNext,
                     isSplit: splitActive,
+                    totalAmount: splitActive ? value : null,
                     myShare: splitActive ? parsedMyShare : null,
                     lentAmount: splitActive ? lentAmount : null,
                     splitWith: splitActive && splitWith.trim() ? splitWith.trim() : null,
@@ -232,7 +235,7 @@ export default function AddTransaction() {
                     setIsSplit(false);
                     setMyShare('');
                     setSplitWith('');
-                    setSuccess(`Added ${category} (${CURRENCY}${value.toFixed(2)})`);
+                    setSuccess(`Added ${category} (${CURRENCY}${txAmount.toFixed(2)})`);
                     setTimeout(() => setSuccess(null), 3500);
                 } else {
                     router.back();
