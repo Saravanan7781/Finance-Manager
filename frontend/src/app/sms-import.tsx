@@ -232,12 +232,13 @@ export default function SmsImport() {
                 setError(`AI API Notice: ${aiError} (categorized using smart local parser)`);
             }
             const resultMap = new Map(aiResults.map((r) => [r.dedupeKey, r]));
+            const rawBodyMap = new Map(aiResults.map((r) => [r.rawBody, r]));
 
             let updatedCount = 0;
             let salaryDetected = 0;
             setItems((prev) =>
                 prev.map((it) => {
-                    const found = resultMap.get(it.dedupeKey);
+                    const found = resultMap.get(it.dedupeKey) || (it.rawBody ? rawBodyMap.get(it.rawBody) : null);
                     if (found) {
                         updatedCount++;
                         if (found.countForNextMonth) salaryDetected++;

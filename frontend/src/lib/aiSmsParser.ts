@@ -3,7 +3,7 @@
 // Includes persistent in-app configuration via AsyncStorage and resilient local heuristics fallback
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ParsedSms, RawSmsMessage, suggestCategory, extractMerchantFromSms, parseBankSms } from './sms';
+import { ParsedSms, RawSmsMessage, suggestCategory, extractMerchantFromSms, parseBankSms, hash } from './sms';
 
 export type AiProvider = 'gemini' | 'openai' | 'groq' | 'custom';
 
@@ -265,13 +265,13 @@ async function callAiApi(
     // 2. If Gemini and OpenAI-compatible failed or was not parsed, try Gemini native generateContent
     if (!rawJsonContent && (config.provider === 'gemini' || config.apiKey)) {
         const key = (process.env.EXPO_PUBLIC_AI_API_KEY || config.apiKey || '').trim();
-        const rawModel = (process.env.EXPO_PUBLIC_AI_MODEL || config.model || 'gemini-3.8-flash').trim();
+        const rawModel = (process.env.EXPO_PUBLIC_AI_MODEL || config.model || 'gemini-3.5-flash').trim();
         const candidateModels = [
             rawModel.toLowerCase().replace(/\s+/g, '-'),
+            'gemini-3.5-flash',
+            'gemini-flash-lite-latest',
             'gemini-3.8-flash',
             'gemini-3.7-flash',
-            'gemini-3.5-flash-lite',
-            'gemini-3.1-flash-lite',
             'gemini-flash-latest',
         ];
         const uniqueModels = Array.from(new Set(candidateModels));
@@ -295,7 +295,7 @@ async function callAiApi(
                             temperature: 0.1,
                         },
                     }),
-                    signal: AbortSignal.timeout(8000),
+                    signal: AbortSignal.timeout(15000),
                 });
 
                 if (nativeResp.ok) {
@@ -413,18 +413,31 @@ export async function aiExtractBulkSms(
 
     for (const item of prepared) {
         const localParsed = localHeuristicAiParser(item.text, item.date);
-        if (!localParsed) continue;
-
         const aiItem = aiResults.get(item.id);
 
+        if (!localParsed && !aiItem) continue;
+
+        const amount = aiItem?.amount ?? localParsed?.amount ?? 0;
+        if (!(amount > 0)) continue;
+
+        const type = aiItem?.type ?? localParsed?.type ?? 'expense';
+        const category = aiItem?.category ?? localParsed?.category ?? 'Other';
+        const merchant = aiItem?.merchant ?? localParsed?.merchant ?? null;
+        const paymentMethod = aiItem?.paymentMethod ?? localParsed?.paymentMethod ?? 'Bank';
+        const countForNextMonth = aiItem?.countForNextMonth ?? localParsed?.countForNextMonth ?? false;
+
+        const parsedDate = localParsed?.date || (item.date ? new Date(item.date).toISOString() : new Date().toISOString());
+        const dedupeKey = localParsed?.dedupeKey || `sms-${hash(item.text)}-${amount}`;
+
         const finalParsed: ParsedSms = {
-            ...localParsed,
-            amount: aiItem?.amount ?? localParsed.amount,
-            type: aiItem?.type ?? localParsed.type,
-            category: aiItem?.category ?? localParsed.category,
-            merchant: aiItem?.merchant ?? localParsed.merchant,
-            paymentMethod: aiItem?.paymentMethod ?? localParsed.paymentMethod,
-            countForNextMonth: aiItem?.countForNextMonth ?? localParsed.countForNextMonth,
+            amount,
+            type,
+            category,
+            merchant,
+            paymentMethod,
+            dedupeKey,
+            date: parsedDate,
+            countForNextMonth,
             rawBody: item.text,
         };
 

@@ -173,13 +173,13 @@ ${JSON.stringify(contextPayload, null, 2)}`;
         // 2. If Gemini and OpenAI format failed, try Gemini native generateContent
         if (!botReply && (config.provider === 'gemini' || config.apiKey)) {
             const key = (process.env.EXPO_PUBLIC_AI_API_KEY || config.apiKey || '').trim();
-            const rawModel = (process.env.EXPO_PUBLIC_AI_MODEL || config.model || 'gemini-3.8-flash').trim();
+            const rawModel = (process.env.EXPO_PUBLIC_AI_MODEL || config.model || 'gemini-3.5-flash').trim();
             const candidateModels = [
                 rawModel.toLowerCase().replace(/\s+/g, '-'),
+                'gemini-3.5-flash',
+                'gemini-flash-lite-latest',
                 'gemini-3.8-flash',
                 'gemini-3.7-flash',
-                'gemini-3.5-flash-lite',
-                'gemini-3.1-flash-lite',
                 'gemini-flash-latest',
             ];
             const uniqueModels = Array.from(new Set(candidateModels));
@@ -201,7 +201,7 @@ ${JSON.stringify(contextPayload, null, 2)}`;
                                 temperature: 0.3,
                             },
                         }),
-                        signal: AbortSignal.timeout(8000),
+                        signal: AbortSignal.timeout(15000),
                     });
                     if (nativeResp.ok) {
                         const nativeData = await nativeResp.json();

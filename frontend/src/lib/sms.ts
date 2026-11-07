@@ -26,7 +26,7 @@ const CREDIT = /\b(credited|received|deposited|refund(?:ed)?|cashback|cr)\b/i;
 const MERCHANT = /\b(?:at|to|towards|from|by|@|info:|vpa|trf to)\s+([A-Za-z0-9][A-Za-z0-9 &._@'-]{1,38}?)(?=\s+(?:on|via|ref|upi|avl|bal|using|for|is|dated|a\/c|acct)\b|[.,;(]|\s*$)/i;
 
 // Short, stable fingerprint so pasting or scanning the same alert twice never creates two entries.
-const hash = (text: string) => {
+export const hash = (text: string) => {
     let h = 5381;
     for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
     return (h >>> 0).toString(36);
