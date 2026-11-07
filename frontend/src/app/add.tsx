@@ -14,7 +14,7 @@ import { categoriesFor, normalizeCategory, PAYMENT_METHODS } from '@/lib/categor
 import { confirmAction } from '@/lib/dialog';
 import { CURRENCY } from '@/lib/config';
 import { formatAmountInput, fromDateInput, parseAmountInput, toDateInput } from '@/lib/format';
-import { parseBankSms } from '@/lib/sms';
+import { aiParseSingleSms } from '@/lib/aiSmsParser';
 import { useTranslation } from '@/lib/i18n';
 import type { CustomCategory, TxType } from '@/lib/types';
 
@@ -52,6 +52,7 @@ export default function AddTransaction() {
     const [success, setSuccess] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    const [pastingAi, setPastingAi] = useState(false);
     const [countForNextMonth, setCountForNextMonth] = useState(
         params.countForNextMonth === '1' || params.countForNextMonth === 'true'
     );
@@ -69,18 +70,21 @@ export default function AddTransaction() {
 
     const pasteFromSms = async () => {
         try {
+            setPastingAi(true);
+            setError(null);
             const text = await Clipboard.getStringAsync();
             if (!text || text.trim().length < 5) {
                 return setError('Clipboard is empty. Copy a bank or UPI SMS alert first.');
             }
 
-            const parsed = parseBankSms(text);
+            const parsed = await aiParseSingleSms(text);
             if (!parsed) {
                 return setError("Couldn't read transaction details from clipboard. Ensure you copied a bank/UPI SMS.");
             }
 
             setType(parsed.type);
             setAmount(formatAmountInput(String(parsed.amount)));
+            if (parsed.category) setCategory(normalizeCategory(parsed.category));
             if (parsed.merchant) setDescription(parsed.merchant);
             if (parsed.countForNextMonth !== undefined) {
                 setCountForNextMonth(Boolean(parsed.countForNextMonth));
@@ -89,14 +93,20 @@ export default function AddTransaction() {
                 if (parsedDate && parsedDate.getDate() >= 23) setCountForNextMonth(true);
             }
             if (parsed.paymentMethod) setMethod(parsed.paymentMethod);
+            if (parsed.date) {
+                const d = new Date(parsed.date);
+                if (!isNaN(d.getTime())) setDateText(toDateInput(d));
+            }
             setDedupeKey(parsed.dedupeKey);
             setSource('sms');
-            setError(null);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-            setSuccess(`Parsed ${parsed.type === 'expense' ? 'debit' : 'credit'} of ${CURRENCY}${parsed.amount}`);
-            setTimeout(() => setSuccess(null), 3500);
+            const details = [parsed.category, parsed.merchant].filter(Boolean).join(' · ');
+            setSuccess(`AI parsed ${details || parsed.type}: ${CURRENCY}${parsed.amount.toFixed(2)}`);
+            setTimeout(() => setSuccess(null), 4000);
         } catch {
             setError('Could not access clipboard.');
+        } finally {
+            setPastingAi(false);
         }
     };
 
@@ -280,9 +290,10 @@ export default function AddTransaction() {
             {!editing && (
                 <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: space.md, flexWrap: 'wrap' }}>
                     <PillButton
-                        label={t('paste_sms')}
+                        label={pastingAi ? 'Analyzing with AI...' : t('paste_sms')}
                         Icon={Sparkles}
                         variant="glass"
+                        loading={pastingAi}
                         onPress={pasteFromSms}
                         style={{ minHeight: 36, paddingHorizontal: 14 }}
                     />

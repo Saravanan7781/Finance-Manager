@@ -344,6 +344,50 @@ async function callAiApi(
 }
 
 /**
+ * Parse a single SMS alert using the AI API (with local heuristics fallback).
+ * Extracts amount, type, category, merchant / note, payment method, date, and next-month flag.
+ */
+export async function aiParseSingleSms(text: string, dateTimestamp?: number): Promise<ParsedSms | null> {
+    if (!text || text.trim().length < 5) return null;
+
+    const trimmed = text.replace(/\s+/g, ' ').trim();
+
+    // If AI is configured, query the AI model for high-accuracy extraction
+    if (isAiApiConfigured()) {
+        try {
+            const results = await callAiApi([{ id: 'single-1', text: trimmed, date: dateTimestamp }]);
+            const aiItem = results.get('single-1');
+            if (aiItem && aiItem.amount > 0) {
+                const local = localHeuristicAiParser(trimmed, dateTimestamp);
+                const dedupeKey = local?.dedupeKey || `sms-${hash(trimmed)}-${aiItem.amount}`;
+                const parsedDate = local?.date || (dateTimestamp ? new Date(dateTimestamp).toISOString() : new Date().toISOString());
+
+                return {
+                    amount: aiItem.amount,
+                    type: aiItem.type,
+                    category: aiItem.category || 'Other',
+                    merchant: aiItem.merchant || local?.merchant || null,
+                    paymentMethod: aiItem.paymentMethod || local?.paymentMethod || 'Bank',
+                    dedupeKey,
+                    date: parsedDate,
+                    countForNextMonth: Boolean(aiItem.countForNextMonth),
+                    rawBody: trimmed,
+                };
+            }
+        } catch (err) {
+            console.warn('AI single SMS parse failed, falling back to local heuristics:', err);
+        }
+    }
+
+    // Fallback: local heuristic parser
+    const local = localHeuristicAiParser(trimmed, dateTimestamp);
+    if (local) return local;
+
+    // As absolute last resort, basic bank SMS parser
+    return parseBankSms(trimmed, dateTimestamp);
+}
+
+/**
  * Test an API key and configuration with a tiny test message.
  */
 export async function testAiConnection(config: AiSmsConfig): Promise<{ ok: boolean; message: string }> {
