@@ -76,17 +76,19 @@ export function SpendChartSkeleton() {
 export function SpendChart({
     range,
     onRangeChange,
-    buckets,
+    buckets = [],
     selected,
     onSelect,
     mine,
+    loading = false,
 }: {
     range: TrendRange;
     onRangeChange: (range: TrendRange) => void;
-    buckets: TrendBucket[];
+    buckets?: TrendBucket[];
     selected: number | null;
     onSelect: (index: number | null) => void;
     mine: boolean;
+    loading?: boolean;
 }) {
     const { t } = useTranslation();
     const config = RANGES.find((r) => r.value === range)!;
@@ -106,8 +108,17 @@ export function SpendChart({
                     <T variant="small" color={colors.muted}>{config.period}</T>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
-                    <T variant="heading" style={{ fontFamily: fonts.extrabold, fontSize: 20 }}>{moneyShort(shownTotal)}</T>
-                    <T variant="tiny" color={colors.muted}>{moneyShort(average)} / {config.unit}</T>
+                    {loading || buckets.length === 0 ? (
+                        <>
+                            <Skeleton width={70} height={20} />
+                            <Skeleton width={56} height={10} style={{ marginTop: 4 }} />
+                        </>
+                    ) : (
+                        <>
+                            <T variant="heading" style={{ fontFamily: fonts.extrabold, fontSize: 20 }}>{moneyShort(shownTotal)}</T>
+                            <T variant="tiny" color={colors.muted}>{moneyShort(average)} / {config.unit}</T>
+                        </>
+                    )}
                 </View>
             </View>
 
@@ -130,8 +141,20 @@ export function SpendChart({
                 })}
             </View>
 
-            <View style={styles.chart}>
-                {buckets.map((bucket, i) => {
+            {loading || buckets.length === 0 ? (
+                <View style={styles.chart}>
+                    {GHOST_BARS.map((ratio, i) => (
+                        <View key={i} style={[styles.column, { justifyContent: 'flex-end' }]}>
+                            <View style={styles.barArea}>
+                                <Skeleton width="68%" height={Math.max(ratio * BAR_AREA, 8)} radius={radius.sm} style={{ maxWidth: 34 }} />
+                            </View>
+                            <Skeleton width={22} height={9} style={{ marginTop: 8 }} />
+                        </View>
+                    ))}
+                </View>
+            ) : (
+                <View style={styles.chart}>
+                    {buckets.map((bucket, i) => {
                     const isSelected = selected === i;
                     const isCurrent = !hasSelection && i === lastIndex;
                     const showPeak = !hasSelection && i === peak && !isCurrent;
@@ -167,8 +190,9 @@ export function SpendChart({
                     );
                 })}
             </View>
+            )}
 
-            {total === 0 ? (
+            {loading ? null : total === 0 ? (
                 <T variant="small" color={colors.muted} style={{ textAlign: 'center', marginTop: space.md }}>
                     {t('nothing_spent_period')}
                 </T>

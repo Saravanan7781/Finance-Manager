@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronDown, ReceiptText, Search, X, type LucideIcon } from 'lucide-react-native';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { DonutChart, groupSlices, sliceColor } from '@/components/DonutChart';
 import { RangeToggle } from '@/components/RangeToggle';
@@ -12,7 +12,7 @@ import { useAsync } from '@/hooks/useAsync';
 import { api } from '@/lib/api';
 import { categoriesFor, getCategory } from '@/lib/categories';
 import { dayLabel, money, moneyShort, monthBounds, monthKey, monthLabel, shiftMonth, tzOffset } from '@/lib/format';
-import type { Tx, TxType, TrendRange } from '@/lib/types';
+import type { Tx, TxType, Trend, TrendRange } from '@/lib/types';
 import { useTranslation } from '@/lib/i18n';
 
 const PAGE = 30;
@@ -72,12 +72,56 @@ export default function Activity() {
         search: debouncedSearch || undefined,
     };
 
-    const { data, loading, error, reload, refreshing, pullToRefresh } = useAsync(
+    const { data, loading, error, reload, refreshing, pullToRefresh: pullRefreshMain } = useAsync(
         () => api.transactions(familyId, queryOpts),
         [familyId, type, serverCategory, mine, month, debouncedSearch]
     );
-    const pie = useAsync(() => api.trend(familyId, pieRange, tzOffset(), 'family', true), [familyId, pieRange]);
+
+    // Cache pie trend by range for instant, zero-lag switching
+    const [pieCache, setPieCache] = useState<Partial<Record<TrendRange, Trend>>>({});
+    const [pieLoading, setPieLoading] = useState(false);
+
+    const loadPie = useCallback(async (r: TrendRange) => {
+        if (pieCache[r]) return;
+        setPieLoading(true);
+        try {
+            const res = await api.trend(familyId, r, tzOffset(), 'family', true);
+            setPieCache((prev) => ({ ...prev, [r]: res }));
+        } catch {
+        } finally {
+            setPieLoading(false);
+        }
+    }, [familyId, pieCache]);
+
+    useEffect(() => {
+        if (!pieCache[pieRange]) {
+            loadPie(pieRange);
+        }
+    }, [pieRange, loadPie]);
+
+    // Background prefetch remaining pie ranges for instant tab switching
+    useEffect(() => {
+        const remaining = (['month', 'week', 'day', 'year'] as TrendRange[]).filter((r) => !pieCache[r]);
+        if (remaining.length === 0) return;
+        let cancelled = false;
+        (async () => {
+            for (const r of remaining) {
+                if (cancelled) break;
+                try {
+                    const res = await api.trend(familyId, r, tzOffset(), 'family', true);
+                    if (!cancelled) setPieCache((prev) => ({ ...prev, [r]: res }));
+                } catch {}
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [familyId]);
+
     const family = useAsync(() => api.family(familyId), [familyId]);
+
+    const pullToRefresh = async () => {
+        setPieCache({});
+        await pullRefreshMain();
+    };
 
     // A fresh first page, or a different filter, invalidates whatever was paged in after it.
     useEffect(() => {
@@ -118,8 +162,9 @@ export default function Activity() {
         return out;
     }, [items]);
 
-    const slices = useMemo(() => groupSlices(pie.data?.byCategory ?? []), [pie.data]);
-    const pieTotal = (pie.data?.byCategory ?? []).reduce((sum, c) => sum + c.total, 0);
+    const currentPie = pieCache[pieRange];
+    const slices = useMemo(() => groupSlices(currentPie?.byCategory ?? []), [currentPie]);
+    const pieTotal = (currentPie?.byCategory ?? []).reduce((sum, c) => sum + c.total, 0);
 
     const filtering = !!category || !!month || mine || !!needle;
     const filteredHere = !!needle || (!!category && !serverCategory);
@@ -201,7 +246,7 @@ export default function Activity() {
                 </View>
 
                 <View style={styles.pieBody}>
-                    {pie.loading && !pie.data ? (
+                    {!currentPie || pieLoading ? (
                         <>
                             <Skeleton width={148} height={148} radius={74} />
                             <View style={{ flex: 1, gap: 12 }}>

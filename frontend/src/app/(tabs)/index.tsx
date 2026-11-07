@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { Bell, Eye, EyeOff, Plus, Sparkles } from 'lucide-react-native';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SpendChart, SpendChartSkeleton } from '@/components/SpendChart';
 import { TxRow, TxRowSkeleton } from '@/components/TxRow';
@@ -13,7 +13,7 @@ import { useTranslation } from '@/lib/i18n';
 import { api } from '@/lib/api';
 import { bucketTitle, daysUntil, firstName, monthKey, moneyShort, tzOffset } from '@/lib/format';
 import { syncReminders } from '@/lib/notifications';
-import type { SummaryScope, TrendRange } from '@/lib/types';
+import type { SummaryScope, TrendBucket, TrendRange } from '@/lib/types';
 
 export default function Home() {
     const { t } = useTranslation();
@@ -26,7 +26,11 @@ export default function Home() {
     const [range, setRange] = useState<TrendRange>('day');
     const [selected, setSelected] = useState<number | null>(null);
 
-    const { data, loading, error, reload, refreshing, pullToRefresh } = useAsync(async () => {
+    // Cache trend buckets by range for instant, zero-lag switching
+    const [trendCache, setTrendCache] = useState<Partial<Record<TrendRange, TrendBucket[]>>>({});
+    const [trendLoading, setTrendLoading] = useState(false);
+
+    const { data, loading, error, reload, refreshing, pullToRefresh: pullRefreshMain } = useAsync(async () => {
         const [summary, trend, recent, goals, loans, recurring] = await Promise.all([
             api.summary(familyId, monthKey(), tzOffset(), scope),
             api.trend(familyId, range, tzOffset(), scope),
@@ -36,11 +40,71 @@ export default function Home() {
             api.recurring(familyId),
         ]);
         syncReminders(loans, goals).catch(() => {});
-        return { summary, buckets: trend.buckets, recent, goals, loans, recurring };
-    }, [familyId, scope, range]);
+        setTrendCache((prev) => ({ ...prev, [range]: trend.buckets }));
+        return { summary, recent, goals, loans, recurring };
+    }, [familyId, scope]);
+
+    // Fetch a single range if not yet cached
+    const fetchTrend = useCallback(async (targetRange: TrendRange) => {
+        if (trendCache[targetRange]) return;
+        setTrendLoading(true);
+        try {
+            const trend = await api.trend(familyId, targetRange, tzOffset(), scope);
+            setTrendCache((prev) => ({ ...prev, [targetRange]: trend.buckets }));
+        } catch {
+        } finally {
+            setTrendLoading(false);
+        }
+    }, [familyId, scope, trendCache]);
+
+    // Prefetch remaining ranges in background so tab switching is instantaneous
+    useEffect(() => {
+        if (!data || loading) return;
+        const remaining: TrendRange[] = (['day', 'week', 'month', 'year'] as TrendRange[]).filter(
+            (r) => !trendCache[r]
+        );
+        if (remaining.length === 0) return;
+
+        let cancelled = false;
+        (async () => {
+            for (const r of remaining) {
+                if (cancelled) break;
+                try {
+                    const trend = await api.trend(familyId, r, tzOffset(), scope);
+                    if (!cancelled) {
+                        setTrendCache((prev) => ({ ...prev, [r]: trend.buckets }));
+                    }
+                } catch {}
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [data, loading, scope, familyId]);
+
+    const changeScope = (next: SummaryScope) => {
+        setScope(next);
+        setSelected(null);
+        setTrendCache({});
+    };
+    const changeRange = (next: TrendRange) => {
+        setRange(next);
+        setSelected(null);
+        if (!trendCache[next]) {
+            fetchTrend(next);
+        }
+    };
+
+    const pullToRefresh = async () => {
+        setTrendCache({});
+        await pullRefreshMain();
+    };
+
+    const currentBuckets = trendCache[range];
 
     // Tapping a bar swaps "Latest" for everything that bar adds up, fetched by the bar's own time span.
-    const bucket = selected !== null ? data?.buckets[selected] ?? null : null;
+    const bucket = selected !== null && currentBuckets ? currentBuckets[selected] ?? null : null;
     const period = useAsync(async () => {
         if (!bucket) return [];
         return api.transactions(familyId, {
@@ -50,15 +114,6 @@ export default function Home() {
             to: new Date(Date.parse(bucket.end) - 1).toISOString(),
         });
     }, [familyId, scope, bucket?.start, bucket?.end]);
-
-    const changeScope = (next: SummaryScope) => {
-        setScope(next);
-        setSelected(null);
-    };
-    const changeRange = (next: TrendRange) => {
-        setRange(next);
-        setSelected(null);
-    };
 
     const listed = bucket ? period.data ?? [] : data?.recent ?? [];
     const listLoading = bucket ? period.loading && !period.data : false;
@@ -131,7 +186,15 @@ export default function Home() {
             </Glass>
 
             {data ? (
-                <SpendChart range={range} onRangeChange={changeRange} buckets={data.buckets} selected={selected} onSelect={setSelected} mine={mine} />
+                <SpendChart
+                    range={range}
+                    onRangeChange={changeRange}
+                    buckets={currentBuckets}
+                    selected={selected}
+                    onSelect={setSelected}
+                    mine={mine}
+                    loading={trendLoading || !currentBuckets}
+                />
             ) : loading ? (
                 <SpendChartSkeleton />
             ) : null}
